@@ -37,7 +37,7 @@ def generate_user_id(rng: random.Random | None = None) -> str:
     return str(uuid.UUID(int=rng.getrandbits(128), version=4))
 
 
-class Profile(BaseModel):
+class PublicProfile(BaseModel):
     """The public profile, visible to other users, agents, and the matching algorithm.
 
     Ratings are deliberately not stored here. "Who rated me" and "who I rated"
@@ -52,10 +52,13 @@ class Profile(BaseModel):
     height_cm: int = Field(ge=120, le=230, strict=True)
     religion: NonEmptyStr
     school: NonEmptyStr
+    major: NonEmptyStr
     job: NonEmptyStr
     interests: list[str] = Field(min_length=1)
+    clubs: list[str]  # Required, but can be empty for someone in no clubs.
+    gender: Literal["man", "woman"]
+    interested_in: Literal["men", "women"]
     looking_for: Literal["short-term", "long-term", "just a date"]
-    agent: bool = Field(strict=True)  # True for a simulated user, False for a real person.
 
     @field_validator("user_id")
     @classmethod
@@ -70,14 +73,25 @@ class Profile(BaseModel):
             raise ValueError(f"user_id must be a UUID4 string, got {user_id!r}")
         return user_id
 
-    @field_validator("interests")
+    @field_validator("interests", "clubs")
     @classmethod
-    def normalize_interests(cls, interests: list[str]) -> list[str]:
+    def normalize_items(cls, items: list[str]) -> list[str]:
         """Strip, lowercase, and deduplicate, keeping first-seen order."""
-        normalized = [interest.strip().lower() for interest in interests]
+        normalized = [item.strip().lower() for item in items]
         if not all(normalized):
-            raise ValueError("interests must not contain blank items")
+            raise ValueError("must not contain blank items")
         return list(dict.fromkeys(normalized))
+
+
+class Profile(PublicProfile):
+    """A stored profile: the public fields, plus a label the matching algorithm never sees.
+
+    agent would be True for everyone in training and False for everyone in testing, so
+    a model that could read it would learn nothing useful from it and could misbehave
+    in testing. Use it for splitting and analyzing data.
+    """
+
+    agent: bool = Field(strict=True)  # True for a simulated user, False for a real person.
 
 
 class Rating(BaseModel):

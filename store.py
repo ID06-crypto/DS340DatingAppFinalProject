@@ -16,16 +16,20 @@ from models import Profile, Rating, Run
 SCHEMA = (
     """
     CREATE TABLE IF NOT EXISTS profiles (
-        user_id     TEXT PRIMARY KEY,
-        name        TEXT NOT NULL,
-        age         INTEGER NOT NULL,
-        height_cm   INTEGER NOT NULL,
-        religion    TEXT NOT NULL,
-        school      TEXT NOT NULL,
-        job         TEXT NOT NULL,
-        interests   TEXT NOT NULL,
-        looking_for TEXT NOT NULL,
-        agent       INTEGER NOT NULL CHECK (agent IN (0, 1))
+        user_id       TEXT PRIMARY KEY,
+        name          TEXT NOT NULL,
+        age           INTEGER NOT NULL,
+        height_cm     INTEGER NOT NULL,
+        religion      TEXT NOT NULL,
+        school        TEXT NOT NULL,
+        major         TEXT NOT NULL,
+        job           TEXT NOT NULL,
+        interests     TEXT NOT NULL,
+        clubs         TEXT NOT NULL,
+        gender        TEXT NOT NULL,
+        interested_in TEXT NOT NULL,
+        looking_for   TEXT NOT NULL,
+        agent         INTEGER NOT NULL CHECK (agent IN (0, 1))
     )
     """,
     """
@@ -106,12 +110,14 @@ class MutualPair(NamedTuple):
 def _profile_to_row(profile: Profile) -> dict[str, object]:
     row = profile.model_dump()
     row["interests"] = json.dumps(profile.interests)
+    row["clubs"] = json.dumps(profile.clubs)
     return row
 
 
 def _row_to_profile(row: sqlite3.Row) -> Profile:
     data = dict(row)
     data["interests"] = json.loads(data["interests"])
+    data["clubs"] = json.loads(data["clubs"])
     data["agent"] = bool(data["agent"])  # SQLite stores booleans as 0 and 1.
     return Profile.model_validate(data)
 

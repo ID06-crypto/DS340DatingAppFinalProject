@@ -32,8 +32,12 @@ def profile_data(**overrides: Any) -> dict[str, Any]:
         "height_cm": 175,
         "religion": "none",
         "school": "BU",
+        "major": "biology",
         "job": "engineer",
         "interests": ["hiking"],
+        "clubs": ["chess club"],
+        "gender": "man",
+        "interested_in": "women",
         "looking_for": "long-term",
         "agent": True,
     }
@@ -106,7 +110,21 @@ def test_add_profile_rejects_invalid_supplied_id(
 
 @pytest.mark.parametrize(
     "field",
-    ["name", "age", "height_cm", "religion", "school", "job", "interests", "looking_for", "agent"],
+    [
+        "name",
+        "age",
+        "height_cm",
+        "religion",
+        "school",
+        "major",
+        "job",
+        "interests",
+        "clubs",
+        "gender",
+        "interested_in",
+        "looking_for",
+        "agent",
+    ],
 )
 def test_add_profile_rejects_missing_field(
     manager: ProfileManager, field: str
@@ -136,6 +154,19 @@ def test_add_profile_rejects_missing_field(
         {"interests": []},
         {"interests": ["hiking", "  "]},
         {"interests": "hiking"},
+        {"major": ""},
+        {"major": "   "},
+        {"major": None},
+        {"clubs": "chess club"},
+        {"clubs": ["chess club", "  "]},
+        {"clubs": None},
+        {"gender": "men"},
+        {"gender": "Man"},
+        {"gender": None},
+        {"interested_in": "man"},
+        {"interested_in": "Women"},
+        {"interested_in": ["men", "women"]},
+        {"interested_in": None},
         {"looking_for": "marriage"},
         {"looking_for": "Long-Term"},
         {"looking_for": ""},
@@ -169,6 +200,36 @@ def test_add_profile_accepts_bounds(
 def test_looking_for_round_trips(manager: ProfileManager, looking_for: str) -> None:
     profile = manager.add_profile(profile_data(looking_for=looking_for))
     assert manager.get_profile(profile.user_id).looking_for == looking_for
+
+
+def test_clubs_are_normalized_and_round_trip(manager: ProfileManager) -> None:
+    profile = manager.add_profile(
+        profile_data(clubs=[" Chess Club", "DEBATE ", "chess club"])
+    )
+    assert profile.clubs == ["chess club", "debate"]
+    assert manager.get_profile(profile.user_id).clubs == ["chess club", "debate"]
+
+
+def test_clubs_can_be_empty(manager: ProfileManager) -> None:
+    profile = manager.add_profile(profile_data(clubs=[]))
+    assert manager.get_profile(profile.user_id).clubs == []
+
+
+def test_major_round_trips(manager: ProfileManager) -> None:
+    profile = manager.add_profile(profile_data(major=" Computer Science "))
+    assert manager.get_profile(profile.user_id).major == "Computer Science"
+
+
+@pytest.mark.parametrize(
+    ("gender", "interested_in"),
+    [("man", "men"), ("man", "women"), ("woman", "men"), ("woman", "women")],
+)
+def test_gender_and_interested_in_round_trip(
+    manager: ProfileManager, gender: str, interested_in: str
+) -> None:
+    profile = manager.add_profile(profile_data(gender=gender, interested_in=interested_in))
+    stored = manager.get_profile(profile.user_id)
+    assert (stored.gender, stored.interested_in) == (gender, interested_in)
 
 
 @pytest.mark.parametrize("agent", [True, False])
@@ -234,6 +295,10 @@ def test_edit_profile_applies_and_persists(manager: ProfileManager) -> None:
         {"name": ""},
         {"job": "   "},
         {"interests": []},
+        {"major": "   "},
+        {"clubs": ["  "]},
+        {"gender": "men"},
+        {"interested_in": "man"},
         {"looking_for": "marriage"},
         {"nickname": "unknown field"},
     ],
@@ -429,7 +494,8 @@ def test_database_constraints_reject_bad_rows(
     conn.execute("PRAGMA foreign_keys = ON")
     for user_id in ("a", "b"):
         conn.execute(
-            "INSERT INTO profiles VALUES (?, 'n', 30, 170, 'r', 's', 'j', '[]', 'long-term', 1)",
+            "INSERT INTO profiles VALUES "
+            "(?, 'n', 30, 170, 'r', 's', 'm', 'j', '[]', '[]', 'man', 'women', 'long-term', 1)",
             (user_id,),
         )
     with pytest.raises(sqlite3.IntegrityError):
@@ -728,6 +794,10 @@ def test_concurrent_edits_to_different_fields_are_not_lost(
         {"interests": ["new interest"]},
         {"looking_for": "just a date"},
         {"agent": False},
+        {"major": "new major"},
+        {"clubs": ["new club"]},
+        {"gender": "woman"},
+        {"interested_in": "men"},
     ]
 
     with ThreadPoolExecutor(max_workers=len(edits)) as pool:

@@ -6,15 +6,19 @@ To add a real algorithm, subclass Matcher. Nothing else needs to change.
 import random
 from abc import ABC, abstractmethod
 
-from models import Profile, Rating
+from models import Profile, PublicProfile, Rating
 from store import Store
+
+
+def _to_public(profile: Profile) -> PublicProfile:
+    return PublicProfile.model_validate(profile.model_dump(exclude={"agent"}))
 
 
 class PublicView:
     """Read-only access to public data, limited to one run.
 
     It's built from the main store alone, so it holds no reference to personas.db or
-    to ProfileManager.
+    to ProfileManager. Profiles come back as PublicProfile, without the agent flag.
 
     Only this run's ratings are visible, so a run's results don't depend on what
     earlier runs left in the database.
@@ -30,11 +34,11 @@ class PublicView:
     def run_id(self) -> str:
         return self._run_id
 
-    def list_profiles(self) -> list[Profile]:
-        return self._store.list_all_profiles()
+    def list_profiles(self) -> list[PublicProfile]:
+        return [_to_public(profile) for profile in self._store.list_all_profiles()]
 
-    def get_profile(self, user_id: str) -> Profile:
-        return self._store.get_profile(user_id)
+    def get_profile(self, user_id: str) -> PublicProfile:
+        return _to_public(self._store.get_profile(user_id))
 
     def ratings_by_rater(self, rater_id: str) -> list[Rating]:
         return self._store.ratings_by_rater(rater_id, self._run_id)

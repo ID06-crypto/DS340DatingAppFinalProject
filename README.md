@@ -114,8 +114,12 @@ ana = manager.add_profile({
     "height_cm": 168,
     "religion": "none",
     "school": "BU",
+    "major": "nursing",
     "job": "nurse",
     "interests": ["Hiking", " chess "],
+    "clubs": ["Outdoors Club"],  # Can be empty.
+    "gender": "woman",  # Or "man".
+    "interested_in": "men",  # Or "women".
     "looking_for": "long-term",  # Or "short-term" or "just a date".
     "agent": True,  # True for a simulated user, False for a real person.
 })
@@ -125,8 +129,12 @@ ben = manager.add_profile({
     "height_cm": 180,
     "religion": "catholic",
     "school": "MIT",
+    "major": "physics",
     "job": "teacher",
     "interests": ["chess"],
+    "clubs": [],
+    "gender": "man",
+    "interested_in": "women",
     "looking_for": "just a date",
     "agent": True,
 })
@@ -155,14 +163,15 @@ Invalid data raises `pydantic.ValidationError`, and an unknown user raises `stor
 
 ## Keeping personas away from the matching algorithm
 
-- **Matchers only get a `PublicView`.** It's built from the main store alone, so it holds no route to `personas.db` or `ProfileManager`. It's also limited to the current run.
+- **Matchers only get a `PublicView`.** It's built from the main store alone, so it holds no route to `personas.db` or `ProfileManager`. It's also limited to the current run, and its profiles leave out the `agent` flag.
 - **`main.db` holds no persona text.** `input_snapshot` is exactly what the rater was shown, which includes the rater's persona, and `raw_output` may repeat it. `add_rating` therefore saves both to `personas.db` as a `RatingTranscript`.
 - **Keep matching code away from `personas.db`.** Don't give it a `ProfileManager` or a `PersonaStore`. Python can't stop code from deliberately opening a file, so this protects against accidents rather than deliberate access.
 
 ## Behavior to know about
 
 - **Re-rating:** a rating replaces an earlier one with the same rater, target, and run, including its transcript. If `raw_output` and `input_snapshot` aren't passed again, the old transcript is deleted.
-- **The `agent` flag:** raters aren't shown it, but matchers can read it because it's on the profile. Runs don't filter on it, so a matcher can show real people's profiles to agents if both are in the same database.
+- **The `agent` flag:** matchers and raters aren't shown it. `PublicView` returns each profile as a `PublicProfile`, which doesn't have the field. Because matchers can't see it, they also can't avoid real people's profiles, so keep agents and real people in separate databases.
+- **`gender` and `interested_in`:** these are only stored. `RandomMatcher` ignores them, so it can show someone a profile outside their stated interest. A real matcher can read both from `PublicView` and filter on them.
 - **Mutual pairs across runs:** with `run_id=None`, both scores must still come from the same run. A pair that qualifies in several runs appears once per run, and each result has a `run_id`.
 - **Seeded IDs:** IDs repeat only if the seed and the order of `add_profile` calls both match. A failed validation also uses up an ID, and running the same seed against an existing database raises `DuplicateProfileError`.
 - **Deleting across two files:** the two databases can't share a transaction. Hidden data is deleted first, so if a delete fails partway, calling it again finishes the job.
@@ -176,6 +185,6 @@ To add a field to profiles or ratings:
 1. Add the field to the model in `models.py`.
 2. Add its column to `SCHEMA` in `store.py`.
 
-The insert and update statements pick up the new field automatically. A field that isn't a simple value, like `interests`, also needs converting in `_profile_to_row` and `_row_to_profile`.
+The insert and update statements pick up the new field automatically. A field that isn't a simple value, like `interests` or `clubs`, also needs converting in `_profile_to_row` and `_row_to_profile`.
 
 Personas are written out column by column, so a new persona field also needs adding to `save_persona` in `personas.py`.

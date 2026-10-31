@@ -30,8 +30,12 @@ def profile_data(name: str = "Sam") -> dict[str, Any]:
         "height_cm": 175,
         "religion": "none",
         "school": "BU",
+        "major": "biology",
         "job": "engineer",
         "interests": ["hiking"],
+        "clubs": ["chess club"],
+        "gender": "man",
+        "interested_in": "women",
         "looking_for": "long-term",
         "agent": True,
     }
@@ -512,8 +516,19 @@ def test_view_works_with_no_persona_database(tmp_path: Path) -> None:
     store = Store(tmp_path / "main.db")
     profile = Profile(user_id=generate_user_id(), **profile_data())
     store.insert_profile(profile)
-    assert PublicView(store, RUN).list_profiles() == [profile]
+    public = PublicView(store, RUN).list_profiles()
+    assert [p.model_dump() for p in public] == [profile.model_dump(exclude={"agent"})]
     assert not (tmp_path / "personas.db").exists()
+
+
+def test_view_never_shows_the_agent_flag(manager: ProfileManager) -> None:
+    user = add_users(manager, 3)[0]
+    view = view_after_run(manager)
+    profiles = [*view.list_profiles(), view.get_profile(user)]
+    assert len(profiles) == 4
+    for profile in profiles:
+        assert not hasattr(profile, "agent")
+        assert "agent" not in profile.model_dump()
 
 
 def test_matching_module_cannot_import_persona_code() -> None:
