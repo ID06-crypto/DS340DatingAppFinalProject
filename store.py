@@ -1,17 +1,17 @@
-"""SQLite persistence for profiles and ratings (main.db).
+"""SQLite persistence for profiles, ratings, and runs (main.db).
 
-This is the module the matching algorithm should use. It has no access to personas,
-which live in a separate database file (see personas.py).
+This module can't reach personas.db, and nothing stored here contains persona text.
 """
 
 import json
 import sqlite3
 from collections.abc import Callable
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
 
 from db import connect, initialize, transaction
-from models import Profile, Rating
+from models import Profile, Rating, Run
 
 SCHEMA = (
     """
@@ -34,14 +34,23 @@ SCHEMA = (
         run_id         TEXT NOT NULL,
         timestamp      TEXT NOT NULL,
         model_version  TEXT,
-        raw_output     TEXT,
-        input_snapshot TEXT,
+        step           INTEGER,
         PRIMARY KEY (rater_id, target_id, run_id),
         CHECK (rater_id <> target_id)
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_ratings_target ON ratings (target_id, run_id)",
     "CREATE INDEX IF NOT EXISTS idx_ratings_run ON ratings (run_id)",
+    """
+    CREATE TABLE IF NOT EXISTS runs (
+        run_id       TEXT PRIMARY KEY,
+        matcher_name TEXT NOT NULL,
+        seed         INTEGER,
+        config       TEXT NOT NULL,
+        started_at   TEXT NOT NULL,
+        finished_at  TEXT
+    )
+    """,
 )
 
 PROFILE_COLUMNS = tuple(Profile.model_fields)
@@ -72,6 +81,14 @@ class ProfileNotFoundError(LookupError):
 
 class DuplicateProfileError(ValueError):
     """A profile with this user_id already exists."""
+
+
+class RunNotFoundError(LookupError):
+    """The requested run_id has no run."""
+
+
+class DuplicateRunError(ValueError):
+    """A run with this run_id already exists."""
 
 
 class MutualPair(NamedTuple):
@@ -105,6 +122,12 @@ def _rating_to_row(rating: Rating) -> dict[str, object]:
 
 def _not_found(user_id: str) -> ProfileNotFoundError:
     return ProfileNotFoundError(f"no profile with user_id {user_id!r}")
+
+
+def _row_to_run(row: sqlite3.Row) -> Run:
+    data = dict(row)
+    data["config"] = json.loads(data["config"])
+    return Run.model_validate(data)
 
 
 class Store:
@@ -249,6 +272,19 @@ class Store:
             ).fetchall()
         return [MutualPair(*row) for row in rows]
 
+    def ratings_in_run(self, run_id: str) -> list[Rating]:
+        """All ratings in this run, in the order they were produced."""
+        with connect(self.db_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM ratings
+                WHERE run_id = ?
+                ORDER BY step, timestamp, rater_id, target_id
+                """,
+                (run_id,),
+            ).fetchall()
+        return [Rating.model_validate(dict(row)) for row in rows]
+
     def already_rated_pairs(self, run_id: str) -> set[tuple[str, str]]:
         """The (rater_id, target_id) pairs already scored in this run."""
         with connect(self.db_path) as conn:
@@ -263,3 +299,55 @@ class Store:
                 "SELECT COUNT(*) FROM ratings WHERE ? IS NULL OR run_id = ?",
                 (run_id, run_id),
             ).fetchone()[0]
+
+    # Runs
+
+    def insert_run(self, run: Run) -> None:
+        try:
+            with transaction(self.db_path) as conn:
+                conn.execute(
+                    """
+                    INSERT INTO runs
+                        (run_id, matcher_name, seed, config, started_at, finished_at)
+                    VALUES (?, ?, ?, ?, ?, NULL)
+                    """,
+                    (
+                        run.run_id,
+                        run.matcher_name,
+                        run.seed,
+                        json.dumps(run.config),
+                        run.started_at.isoformat(timespec="microseconds"),
+                    ),
+                )
+        except sqlite3.IntegrityError as error:
+            if error.sqlite_errorcode == sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY:
+                raise DuplicateRunError(
+                    f"a run with run_id {run.run_id!r} already exists"
+                ) from error
+            raise
+
+    def get_run(self, run_id: str) -> Run:
+        with connect(self.db_path) as conn:
+            row = conn.execute(
+                "SELECT * FROM runs WHERE run_id = ?", (run_id,)
+            ).fetchone()
+        if row is None:
+            raise RunNotFoundError(f"no run with run_id {run_id!r}")
+        return _row_to_run(row)
+
+    def finish_run(self, run_id: str) -> Run:
+        """Record that a run has finished. A run can only be finished once."""
+        finished_at = datetime.now(timezone.utc).isoformat(timespec="microseconds")
+        with transaction(self.db_path) as conn:
+            row = conn.execute(
+                "SELECT finished_at FROM runs WHERE run_id = ?", (run_id,)
+            ).fetchone()
+            if row is None:
+                raise RunNotFoundError(f"no run with run_id {run_id!r}")
+            if row["finished_at"] is not None:
+                raise ValueError(f"run {run_id!r} has already finished")
+            conn.execute(
+                "UPDATE runs SET finished_at = ? WHERE run_id = ?",
+                (finished_at, run_id),
+            )
+        return self.get_run(run_id)

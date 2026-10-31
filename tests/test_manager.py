@@ -13,7 +13,14 @@ from pydantic import ValidationError
 from manager import ProfileManager
 from models import Rating, generate_user_id
 from personas import PersonaStore
-from store import DuplicateProfileError, MutualPair, ProfileNotFoundError, Store
+from store import (
+    DuplicateProfileError,
+    DuplicateRunError,
+    MutualPair,
+    ProfileNotFoundError,
+    RunNotFoundError,
+    Store,
+)
 
 RUN = "run-1"
 
@@ -244,10 +251,16 @@ def test_add_rating_stores_all_fields(manager: ProfileManager) -> None:
         input_snapshot="what the rater saw",
     )
     assert rating.timestamp.utcoffset() is not None
+    assert rating.model_version == "model-1"
     assert manager.ratings_by_rater(alice) == [rating]
     assert manager.ratings_of_target(bob) == [rating]
     assert manager.ratings_by_rater(bob) == []
     assert manager.ratings_of_target(alice) == []
+    transcript = manager.get_transcript(alice, bob, RUN)
+    assert transcript.raw_output == '{"score": 7.5}'
+    assert transcript.input_snapshot == "what the rater saw"
+    assert manager.transcripts_in_run(RUN) == [transcript]
+    assert manager.transcripts_in_run("other-run") == []
 
 
 @pytest.mark.parametrize("score", [7.35, 1.0, 10.0, 3.3333333333333335, 1.0000001])
@@ -298,8 +311,61 @@ def test_rerating_overwrites_within_a_run(manager: ProfileManager) -> None:
     manager.add_rating(alice, bob, 3.0, RUN, model_version="old", raw_output="old")
     newer = manager.add_rating(alice, bob, 9.0, RUN, model_version="new")
     assert manager.ratings_by_rater(alice) == [newer]
-    assert newer.raw_output is None
+    # The old transcript belonged to the replaced rating, so it mustn't linger.
+    assert manager.get_transcript(alice, bob, RUN) is None
     assert manager.count_ratings() == 1
+
+
+def test_rerating_replaces_transcript(manager: ProfileManager) -> None:
+    alice, bob = add_users(manager, 2)
+    manager.add_rating(alice, bob, 3.0, RUN, raw_output="old", input_snapshot="old")
+    manager.add_rating(alice, bob, 9.0, RUN, raw_output="new")
+    transcript = manager.get_transcript(alice, bob, RUN)
+    assert transcript.raw_output == "new"
+    assert transcript.input_snapshot is None
+
+
+def test_rating_without_transcript_data_stores_no_transcript(
+    manager: ProfileManager,
+) -> None:
+    alice, bob = add_users(manager, 2)
+    manager.add_rating(alice, bob, 5.0, RUN)
+    assert manager.get_transcript(alice, bob, RUN) is None
+
+
+def test_invalid_rating_stores_no_transcript(manager: ProfileManager) -> None:
+    alice, bob = add_users(manager, 2)
+    with pytest.raises(ValidationError):
+        manager.add_rating(alice, bob, 11.0, RUN, raw_output="x")
+    with pytest.raises(ProfileNotFoundError):
+        manager.add_rating(alice, "missing", 5.0, RUN, raw_output="x")
+    assert manager.transcripts_in_run(RUN) == []
+
+
+def test_saved_rating_always_has_its_transcript(
+    manager: ProfileManager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alice, bob = add_users(manager, 2)
+
+    def fail(transcript: Any) -> None:
+        raise sqlite3.OperationalError("simulated failure")
+
+    monkeypatch.setattr(manager.personas, "save_transcript", fail)
+    with pytest.raises(sqlite3.OperationalError):
+        manager.add_rating(alice, bob, 5.0, RUN, raw_output="x")
+    assert manager.count_ratings() == 0
+
+
+def test_transcripts_are_not_in_main_database(
+    manager: ProfileManager, main_db: Path
+) -> None:
+    alice, bob = add_users(manager, 2)
+    manager.add_rating(
+        alice, bob, 5.0, RUN, raw_output="SECRET_RAW", input_snapshot="SECRET_SNAPSHOT"
+    )
+    for path in main_db.parent.glob("main.db*"):
+        assert b"SECRET" not in path.read_bytes()
+    assert manager.get_transcript(alice, bob, RUN) is not None
 
 
 def test_different_run_stores_a_second_row(manager: ProfileManager) -> None:
@@ -453,6 +519,21 @@ def test_delete_removes_persona(manager: ProfileManager) -> None:
 
     assert manager.get_persona(alice) is None
     assert manager.get_persona(bob) is not None
+
+
+def test_delete_removes_transcripts_as_rater_and_target(
+    manager: ProfileManager,
+) -> None:
+    alice, bob, carol = add_users(manager, 3)
+    manager.add_rating(alice, bob, 7.0, "run-1", raw_output="a to b")
+    manager.add_rating(bob, alice, 7.0, "run-2", raw_output="b to a")
+    manager.add_rating(bob, carol, 7.0, "run-1", raw_output="b to c")
+
+    manager.delete_profile(alice)
+
+    assert manager.get_transcript(alice, bob, "run-1") is None
+    assert manager.get_transcript(bob, alice, "run-2") is None
+    assert manager.get_transcript(bob, carol, "run-1") is not None
 
 
 def test_delete_works_without_a_persona(manager: ProfileManager) -> None:
@@ -664,5 +745,70 @@ def test_rating_model_defaults() -> None:
     rating = Rating(rater_id="a", target_id="b", score=5.0, run_id=RUN)
     assert rating.timestamp.utcoffset() is not None
     assert rating.model_version is None
-    assert rating.raw_output is None
-    assert rating.input_snapshot is None
+    assert rating.step is None
+
+
+# Steps
+
+
+def test_step_round_trips_and_orders_a_run(manager: ProfileManager) -> None:
+    alice, bob, carol = add_users(manager, 3)
+    second = manager.add_rating(alice, bob, 5.0, RUN, step=2)
+    first = manager.add_rating(alice, carol, 6.0, RUN, step=1)
+    assert manager.ratings_in_run(RUN) == [first, second]
+    assert manager.ratings_in_run("other-run") == []
+
+
+@pytest.mark.parametrize("step", [0, -1, "1", 1.5])
+def test_invalid_step_rejected(manager: ProfileManager, step: Any) -> None:
+    alice, bob = add_users(manager, 2)
+    with pytest.raises(ValidationError):
+        manager.add_rating(alice, bob, 5.0, RUN, step=step)
+
+
+# Runs
+
+
+def test_start_and_finish_run(manager: ProfileManager) -> None:
+    config = {"n_steps": 5, "nested": {"a": [1, 2]}}
+    run = manager.start_run(RUN, "random", 42, config)
+    assert run.finished_at is None
+    assert manager.get_run(RUN) == run
+
+    finished = manager.finish_run(RUN)
+
+    assert finished.finished_at is not None
+    assert finished.finished_at >= finished.started_at
+    assert finished.config == config
+    assert finished.seed == 42
+    assert finished.matcher_name == "random"
+    assert manager.get_run(RUN) == finished
+
+
+def test_seed_and_config_are_optional(manager: ProfileManager) -> None:
+    run = manager.start_run(RUN, "random")
+    assert run.seed is None
+    assert run.config == {}
+    assert manager.get_run(RUN) == run
+
+
+def test_duplicate_run_id_raises(manager: ProfileManager) -> None:
+    original = manager.start_run(RUN, "random", 1, {"a": 1})
+    with pytest.raises(DuplicateRunError, match=RUN):
+        manager.start_run(RUN, "other", 2, {"b": 2})
+    assert manager.get_run(RUN) == original
+
+
+def test_unknown_run_raises(manager: ProfileManager) -> None:
+    with pytest.raises(RunNotFoundError):
+        manager.get_run("missing")
+    with pytest.raises(RunNotFoundError):
+        manager.finish_run("missing")
+
+
+def test_finishing_a_run_twice_raises(manager: ProfileManager) -> None:
+    manager.start_run(RUN, "random")
+    finished = manager.finish_run(RUN)
+    with pytest.raises(ValueError, match="already finished"):
+        manager.finish_run(RUN)
+    assert manager.get_run(RUN) == finished

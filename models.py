@@ -79,10 +79,10 @@ class Profile(BaseModel):
 
 
 class Rating(BaseModel):
-    """One user's score of another within a run.
+    """One user's score of another within a run. This is public data, kept in main.db.
 
-    raw_output and input_snapshot are stored in main.db, which the matching
-    algorithm can read. Anything from a persona that appears in them is exposed.
+    What the rater was shown and what it answered can contain its persona, so that's
+    kept separately, in a RatingTranscript.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -93,14 +93,26 @@ class Rating(BaseModel):
     run_id: NonEmptyStr
     timestamp: UtcDatetime = Field(default_factory=_utc_now)
     model_version: str | None = None
-    raw_output: str | None = None
-    input_snapshot: str | None = None
+    step: int | None = Field(default=None, ge=1, strict=True)
 
     @model_validator(mode="after")
     def reject_self_rating(self) -> Self:
         if self.rater_id == self.target_id:
             raise ValueError("a user cannot rate themselves")
         return self
+
+
+class Run(BaseModel):
+    """One matching experiment. Its ratings share its run_id."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: NonEmptyStr
+    matcher_name: NonEmptyStr
+    seed: int | None = Field(default=None, strict=True)
+    config: dict[str, Any] = Field(default_factory=dict)
+    started_at: UtcDatetime = Field(default_factory=_utc_now)
+    finished_at: UtcDatetime | None = None
 
 
 class Persona(BaseModel):
@@ -117,3 +129,19 @@ class Persona(BaseModel):
     description: NonEmptyStr
     generation_seeds: dict[str, Any] = Field(default_factory=dict)
     created_at: UtcDatetime = Field(default_factory=_utc_now)
+
+
+class RatingTranscript(BaseModel):
+    """HIDDEN record of how a rating was produced. Never expose this to the matching algorithm.
+
+    input_snapshot is exactly what the rater was shown, which includes its persona, and
+    raw_output may repeat it. That's why this is stored in personas.db, not with the rating.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    rater_id: NonEmptyStr
+    target_id: NonEmptyStr
+    run_id: NonEmptyStr
+    raw_output: str | None = None
+    input_snapshot: str | None = None

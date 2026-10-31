@@ -1,0 +1,13 @@
+# Python
+.venv/
+__pycache__/
+.pytest_cache/
+
+# Databases, which can hold hidden persona data
+*.db
+*.db-shm
+*.db-wal
+
+# Exports
+profiles.json
+personas.json
