@@ -16,14 +16,15 @@ from models import Profile, Rating, Run
 SCHEMA = (
     """
     CREATE TABLE IF NOT EXISTS profiles (
-        user_id   TEXT PRIMARY KEY,
-        name      TEXT NOT NULL,
-        age       INTEGER NOT NULL,
-        height_cm INTEGER NOT NULL,
-        religion  TEXT NOT NULL,
-        school    TEXT NOT NULL,
-        job       TEXT NOT NULL,
-        interests TEXT NOT NULL
+        user_id     TEXT PRIMARY KEY,
+        name        TEXT NOT NULL,
+        age         INTEGER NOT NULL,
+        height_cm   INTEGER NOT NULL,
+        religion    TEXT NOT NULL,
+        school      TEXT NOT NULL,
+        job         TEXT NOT NULL,
+        interests   TEXT NOT NULL,
+        looking_for TEXT NOT NULL
     )
     """,
     """

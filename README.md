@@ -116,6 +116,7 @@ ana = manager.add_profile({
     "school": "BU",
     "job": "nurse",
     "interests": ["Hiking", " chess "],
+    "looking_for": "long-term",  # Or "short-term" or "just a date".
 })
 ben = manager.add_profile({
     "name": "Ben",
@@ -125,6 +126,7 @@ ben = manager.add_profile({
     "school": "MIT",
     "job": "teacher",
     "interests": ["chess"],
+    "looking_for": "just a date",
 })
 print(ana.interests)  # ['hiking', 'chess']
 

@@ -3,7 +3,7 @@
 import random
 import uuid
 from datetime import datetime, timezone
-from typing import Annotated, Any, Self
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import (
     AfterValidator,
@@ -54,6 +54,7 @@ class Profile(BaseModel):
     school: NonEmptyStr
     job: NonEmptyStr
     interests: list[str] = Field(min_length=1)
+    looking_for: Literal["short-term", "long-term", "just a date"]
 
     @field_validator("user_id")
     @classmethod

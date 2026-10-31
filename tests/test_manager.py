@@ -34,6 +34,7 @@ def profile_data(**overrides: Any) -> dict[str, Any]:
         "school": "BU",
         "job": "engineer",
         "interests": ["hiking"],
+        "looking_for": "long-term",
     }
     return {**data, **overrides}
 
@@ -104,7 +105,7 @@ def test_add_profile_rejects_invalid_supplied_id(
 
 @pytest.mark.parametrize(
     "field",
-    ["name", "age", "height_cm", "religion", "school", "job", "interests"],
+    ["name", "age", "height_cm", "religion", "school", "job", "interests", "looking_for"],
 )
 def test_add_profile_rejects_missing_field(
     manager: ProfileManager, field: str
@@ -134,6 +135,10 @@ def test_add_profile_rejects_missing_field(
         {"interests": []},
         {"interests": ["hiking", "  "]},
         {"interests": "hiking"},
+        {"looking_for": "marriage"},
+        {"looking_for": "Long-Term"},
+        {"looking_for": ""},
+        {"looking_for": None},
         {"nickname": "unknown field"},
     ],
 )
@@ -154,6 +159,12 @@ def test_add_profile_accepts_bounds(
 ) -> None:
     manager.add_profile(profile_data(**overrides))
     assert manager.count_profiles() == 1
+
+
+@pytest.mark.parametrize("looking_for", ["short-term", "long-term", "just a date"])
+def test_looking_for_round_trips(manager: ProfileManager, looking_for: str) -> None:
+    profile = manager.add_profile(profile_data(looking_for=looking_for))
+    assert manager.get_profile(profile.user_id).looking_for == looking_for
 
 
 def test_interests_are_normalized_and_round_trip(manager: ProfileManager) -> None:
@@ -212,6 +223,7 @@ def test_edit_profile_applies_and_persists(manager: ProfileManager) -> None:
         {"name": ""},
         {"job": "   "},
         {"interests": []},
+        {"looking_for": "marriage"},
         {"nickname": "unknown field"},
     ],
 )
@@ -406,7 +418,7 @@ def test_database_constraints_reject_bad_rows(
     conn.execute("PRAGMA foreign_keys = ON")
     for user_id in ("a", "b"):
         conn.execute(
-            "INSERT INTO profiles VALUES (?, 'n', 30, 170, 'r', 's', 'j', '[]')",
+            "INSERT INTO profiles VALUES (?, 'n', 30, 170, 'r', 's', 'j', '[]', 'long-term')",
             (user_id,),
         )
     with pytest.raises(sqlite3.IntegrityError):
@@ -703,6 +715,7 @@ def test_concurrent_edits_to_different_fields_are_not_lost(
         {"school": "new school"},
         {"job": "new job"},
         {"interests": ["new interest"]},
+        {"looking_for": "just a date"},
     ]
 
     with ThreadPoolExecutor(max_workers=len(edits)) as pool:

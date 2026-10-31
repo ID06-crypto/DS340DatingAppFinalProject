@@ -17,11 +17,11 @@ SEED = 42
 N_STEPS = 15
 
 USERS = [
-    ("Ana", 29, 168, "none", "BU", "nurse", ["hiking", "chess"], "Values kindness."),
-    ("Ben", 31, 180, "catholic", "MIT", "teacher", ["chess"], "Wants to laugh a lot."),
-    ("Cam", 26, 175, "jewish", "NYU", "designer", ["art"], "Loves ambition."),
-    ("Dee", 34, 160, "muslim", "UCLA", "lawyer", ["running"], "Wants stability."),
-    ("Eli", 28, 185, "hindu", "Yale", "chef", ["cooking"], "Seeks adventure."),
+    ("Ana", 29, 168, "none", "BU", "nurse", ["hiking", "chess"], "long-term", "Values kindness."),
+    ("Ben", 31, 180, "catholic", "MIT", "teacher", ["chess"], "just a date", "Wants to laugh a lot."),
+    ("Cam", 26, 175, "jewish", "NYU", "designer", ["art"], "short-term", "Loves ambition."),
+    ("Dee", 34, 160, "muslim", "UCLA", "lawyer", ["running"], "long-term", "Wants stability."),
+    ("Eli", 28, 185, "hindu", "Yale", "chef", ["cooking"], "short-term", "Seeks adventure."),
 ]
 
 
@@ -32,7 +32,7 @@ def main() -> None:
         manager = ProfileManager(
             Path(tmp) / "main.db", Path(tmp) / "personas.db", rng=random.Random(SEED)
         )
-        for name, age, height_cm, religion, school, job, interests, persona in USERS:
+        for name, age, height_cm, religion, school, job, interests, looking_for, persona in USERS:
             profile = manager.add_profile({
                 "name": name,
                 "age": age,
@@ -41,6 +41,7 @@ def main() -> None:
                 "school": school,
                 "job": job,
                 "interests": interests,
+                "looking_for": looking_for,
             })
             manager.add_persona(profile.user_id, persona)
 
