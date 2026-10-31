@@ -1,6 +1,6 @@
 # Reciprocal matching: experiment framework
 
-A local framework for training a reciprocal matching algorithm with AI agents as simulated users. In each step, a simulated user is shown one profile chosen by a matcher, rates it, and the rating is saved. The matcher is currently random and the Jev rater is a stub. Persona generation isn't part of this code.
+A local framework for training a reciprocal matching algorithm with AI agents as simulated users. In each step, a simulated user is shown one profile chosen by a matcher, rates it, and the rating is saved. The matcher is currently random and the Jev rater is a stub. The current users are all synthetic, as described in [Synthetic data](#synthetic-data).
 
 | File | Purpose |
 | --- | --- |
@@ -13,6 +13,8 @@ A local framework for training a reciprocal matching algorithm with AI agents as
 | `raters.py` | `Rater` interface, `build_rater_input`, `FakeRater`, `JevRater` (stub) |
 | `simulation.py` | `run_simulation` and `RunSummary` |
 | `scripts/run_baseline.py` | An end-to-end run on fake users |
+| `scripts/generate_profiles.py` | Generates the synthetic profiles and saves them to `main.db` |
+| `Data Generation/` | The profile and persona generators, and the lists they sample from |
 
 ## Install
 
@@ -175,6 +177,80 @@ Invalid data raises `pydantic.ValidationError`, and an unknown user raises `stor
 - **Mutual pairs across runs:** with `run_id=None`, both scores must still come from the same run. A pair that qualifies in several runs appears once per run, and each result has a `run_id`.
 - **Seeded IDs:** IDs repeat only if the seed and the order of `add_profile` calls both match. A failed validation also uses up an ID, and running the same seed against an existing database raises `DuplicateProfileError`.
 - **Deleting across two files:** the two databases can't share a transaction. Hidden data is deleted first, so if a delete fails partway, calling it again finishes the job.
+
+## Synthetic data
+
+The dataset is 10,000 simulated Boston University students, all randomly generated, so none of it describes a real person. Every user has one profile and one persona, linked by `user_id`, and every profile has `agent` set to `True`.
+
+### Profiles
+
+`scripts/generate_profiles.py` calls `generate_profile` in `Data Generation/synthetic_data.py` once per user, with seed 42. Each value is drawn uniformly unless the table says otherwise.
+
+| Field | How it's generated |
+| --- | --- |
+| `user_id` | A UUID4 from the seeded generator, created by `add_profile` |
+| `gender` | `man` or `woman`, 50/50 |
+| `name` | One of 80 names for that gender, from `profile_lists.py` |
+| `age` | 18 to 24 |
+| `height_cm` | 150 to 200, for all genders |
+| `religion` | One of 10 options |
+| `school` | Always `BU` |
+| `major` | One of 42 majors, from `profile_lists.py` |
+| `job` | One of 8 student jobs |
+| `interests` | 1 to 3 from `hobbylist.csv`, which has 383 unique hobbies once lowercased |
+| `clubs` | 0 to 3 BU organizations from `bu_clubs.py`, leaving out men-only clubs for women and women-only clubs for men |
+| `interested_in` | The user's own gender 3% of the time (`GAY_RATE`), otherwise the opposite gender |
+| `looking_for` | `short-term`, `long-term`, or `just a date` |
+
+### Personas
+
+`Data Generation/synthetic_personas.py` gives each agent profile a persona of 25 trait scores from 0 to 1:
+
+| Category | Traits |
+| --- | --- |
+| `core_personality` | openness, conscientiousness, extraversion, agreeableness, neuroticism, honesty_humility |
+| `thinking_style` | analytical_thinking, need_for_cognition, abstract_thinking, attention_to_detail, cognitive_flexibility, tolerance_for_ambiguity |
+| `decision_making` | risk_tolerance, impulsivity, future_orientation |
+| `emotional_style` | rumination, optimism, emotional_expressiveness |
+| `social_style` | empathy, trust_in_others, conformity, assertiveness |
+| `motivation_and_values` | achievement_drive, autonomy_need, traditionalism |
+
+Each score is drawn from a normal distribution with mean 0.5 and SD 0.2, then rounded to two decimal places. Values outside 0 to 1 are redrawn rather than clipped, so the actual SD is about 0.19. Each user's scores depend only on seed 42 and their `user_id`.
+
+### How it's stored
+
+| Data | File | Table | Format |
+| --- | --- | --- | --- |
+| Profiles | `main.db` | `profiles` | One row per user. `interests` and `clubs` are JSON lists, and `agent` is 0 or 1. |
+| Personas | `personas.db` | `personas` | One row per user. `description` holds the scores as JSON, and `generation_seeds` records the seed, mean, and SD. |
+
+Scores are kept in `description` because that's the part of a persona raters are shown. To read them:
+
+```python
+scores = json.loads(manager.get_persona(user_id).description)["scores"]
+```
+
+Both files are SQLite databases in the project root. `.gitignore` excludes them, so they aren't in the repository and each copy of the project has to generate its own.
+
+### Regenerating the data
+
+```bash
+rm -f main.db* personas.db*
+python scripts/generate_profiles.py
+python "Data Generation/synthetic_personas.py"
+```
+
+Run the steps in this order, because personas are generated for profiles that already exist. The same seeds and lists give the same data, but editing a list changes the profiles generated from then on.
+
+Running `generate_profiles.py` against an existing `main.db` with the same seed raises `DuplicateProfileError`. Running `synthetic_personas.py` again only adds personas for profiles that don't have one, so it doesn't change existing ones.
+
+### Limitations
+
+- **Fields are unrelated:** apart from `name`, `clubs`, and `interested_in` depending on `gender`, each field is drawn independently. Height doesn't vary by gender, and majors don't affect jobs or clubs.
+- **Not representative:** the uniform draws don't reflect BU's real demographics, so each religion is about 10% of users, for example.
+- **Personas are unrelated to profiles:** a user's trait scores don't depend on their profile, including their interests or `looking_for`.
+- **Small same-gender pool:** only 296 users (about 3%) are interested in their own gender, so these users have far fewer compatible profiles than others.
+- **One gender of interest:** `interested_in` holds a single value, so the data has no users interested in both men and women.
 
 ## Changing the schema
 
