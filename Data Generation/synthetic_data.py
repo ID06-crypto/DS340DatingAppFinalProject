@@ -6,10 +6,13 @@ from pathlib import Path
 from typing import Any
 
 from bu_clubs import BU_CLUBS, MEN_ONLY_CLUBS, WOMEN_ONLY_CLUBS
+from profile_lists import MAJORS, MEN_NAMES, WOMEN_NAMES
 
 HOBBIES_PATH = Path(__file__).resolve().parent / "hobbylist.csv"
 
+SCHOOL = "BU"
 GAY_RATE = 0.03  # The share of users interested in their own gender.
+NAMES_BY_GENDER = {"man": MEN_NAMES, "woman": WOMEN_NAMES}
 SAME_GENDER = {"man": "men", "woman": "women"}
 OPPOSITE_GENDER = {"man": "women", "woman": "men"}
 CLUBS_OPEN_TO = {
@@ -62,26 +65,24 @@ HOBBIES = load_hobbies()
 
 def generate_profile(
     *,
-    names: list[str],
-    schools: list[str],
-    majors: list[str],
     gay_rate: float = GAY_RATE,
     rng: random.Random | None = None,
 ) -> dict[str, Any]:
     """Return one random agent profile, ready for ProfileManager.add_profile.
 
     add_profile validates the result and generates its user_id. A seeded rng makes
-    the profile reproducible. Clubs are limited to those open to the user's gender.
+    the profile reproducible. Names and clubs are limited to those fitting the user's
+    gender.
     """
     rng = rng if rng is not None else random.Random()
     gender = rng.choice(tuple(SAME_GENDER))
     return {
-        "name": rng.choice(names),
+        "name": rng.choice(NAMES_BY_GENDER[gender]),
         "age": rng.randint(MIN_AGE, MAX_AGE),
         "height_cm": rng.randint(MIN_HEIGHT_CM, MAX_HEIGHT_CM),
         "religion": rng.choice(RELIGIONS),
-        "school": rng.choice(schools),
-        "major": rng.choice(majors),
+        "school": SCHOOL,
+        "major": rng.choice(MAJORS),
         "job": rng.choice(JOBS),
         "interests": rng.sample(HOBBIES, rng.randint(1, MAX_INTERESTS)),
         "clubs": rng.sample(CLUBS_OPEN_TO[gender], rng.randint(0, MAX_CLUBS)),
