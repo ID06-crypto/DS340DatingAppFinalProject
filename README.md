@@ -1,14 +1,16 @@
-# Reciprocal matching: data layer
+# Reciprocal matching: storage layer
 
-Local storage for training a reciprocal matching algorithm with AI agents as simulated users. It holds profiles, ratings, and hidden agent personas in SQLite. The algorithm and the agent simulation aren't part of this code.
+Local storage for training a reciprocal matching algorithm with AI agents as simulated users. The algorithm, agent simulation, and persona generation aren't part of this code.
 
 | File | Purpose |
 | --- | --- |
 | `models.py` | Pydantic models: `Profile`, `Rating`, `Persona` |
-| `store.py` | SQLite persistence |
-| `manager.py` | `ProfileManager`, the public interface for the rest of the project |
+| `store.py` | Profiles and ratings, in `main.db` |
+| `personas.py` | Hidden personas, in `personas.db` |
+| `db.py` | Connection and WAL helpers shared by both stores |
+| `manager.py` | `ProfileManager`, the interface for the rest of the project |
 
-## Setup and tests
+## Install
 
 Requires Python 3.11 or later.
 
@@ -16,16 +18,23 @@ Requires Python 3.11 or later.
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+```
+
+## Run the tests
+
+```bash
 pytest
 ```
 
 ## Usage
 
 ```python
+import random
+
 from manager import ProfileManager
 
 # rng makes generated IDs reproducible. Omit it for random IDs.
-manager = ProfileManager("training.db", rng=42)
+manager = ProfileManager("main.db", "personas.db", rng=random.Random(42))
 
 ana = manager.add_profile({
     "name": "Ana",
@@ -48,36 +57,47 @@ ben = manager.add_profile({
 print(ana.interests)  # ['hiking', 'chess']
 
 manager.edit_profile(ana.user_id, job="doctor")
+manager.add_persona(ana.user_id, "Values kindness over ambition.", {"kindness": 0.9})
 
-manager.add_rating(ana.user_id, ben.user_id, 8, run_id="run-1")
-manager.add_rating(ben.user_id, ana.user_id, 9, run_id="run-1")
+manager.add_rating(ana.user_id, ben.user_id, 7.35, run_id="run-1", model_version="model-1")
+manager.add_rating(ben.user_id, ana.user_id, 8.5, run_id="run-1")
 
-print(len(manager.ratings_of(ben.user_id, run_id="run-1")))  # 1
-print(len(manager.mutual_pairs("run-1", min_score=7)))  # 1
+print(manager.ratings_of_target(ben.user_id, run_id="run-1")[0].score)  # 7.35
+print(len(manager.mutual_pairs(7.0, run_id="run-1")))  # 1
+print(len(manager.already_rated_pairs("run-1")))  # 2
 
-manager.export_profiles_json("profiles.json")
+manager.store.export_profiles_json("profiles.json")
+manager.personas.export_personas_json("personas.json")
 
-# Removes Ana's profile, persona, and ratings in every run.
+# Removes Ana's profile, ratings in every run, and persona.
 manager.delete_profile(ana.user_id)
 ```
 
+To import your datasets, include a `user_id` in the dict passed to `add_profile`. It must be a lowercase, hyphenated UUID4 string, and a duplicate raises `store.DuplicateProfileError`.
+
 Invalid data raises `pydantic.ValidationError`, and an unknown user raises `store.ProfileNotFoundError`.
+
+## Keeping personas away from the matching algorithm
+
+- **Use `Store`, not `ProfileManager`.** `ProfileManager` opens the persona database, so give the matching algorithm a `store.Store("main.db")`, which can only reach profiles and ratings.
+- **Check what goes into ratings.** `raw_output` and `input_snapshot` are stored in `main.db`. If a rater's prompt or reasoning includes persona text, it ends up where the algorithm can read it, and the code can't detect this.
 
 ## Behavior to know about
 
-- **Re-rating:** each run keeps one rating per rater and target. Rating again in the same run replaces the earlier score.
-- **Deleting a profile:** this removes the user's ratings from every run, which changes what past runs replay. Pass `anonymize_ratings=True` to keep the scores. The deleted user's ID then reads back as `models.ANONYMIZED_ID`, and those ratings never appear in mutual pairs.
-- **Seeded IDs:** IDs repeat only if the seed and the order of `add_profile` calls both match, so failed validations and multi-threaded calls can change them. Reusing a seed on a database that already has those IDs raises `sqlite3.IntegrityError`, so use a new database file per seeded run.
-- **Personas:** these hold the ground truth agents rate by, so they must not reach the matching algorithm. Agent simulation code reads them through `store.Store`. Matching code should import only `manager`. They share a database file with profiles, so this boundary is a convention and isn't enforced.
+- **Re-rating:** a rating replaces every field of an earlier one with the same rater, target, and run, including setting `raw_output` to empty if it's not passed again.
+- **Mutual pairs across runs:** with `run_id=None`, both scores must still come from the same run. A pair that qualifies in several runs appears once per run, and each result has a `run_id`.
+- **Seeded IDs:** IDs repeat only if the seed and the order of `add_profile` calls both match. A failed validation also uses up an ID, and running the same seed against an existing database raises `DuplicateProfileError`.
+- **Deleting across two files:** the two databases can't share a transaction. The persona is deleted first, so if a delete fails partway, calling it again finishes the job.
 
 ## Changing the schema
 
-There are no migrations. Opening a database created with a different schema version raises `SchemaVersionError`, and the fix is to delete the file or migrate it by hand.
+There are no migrations. Tables are only created if they're missing, so after changing a table, delete the `.db` files, along with their `-wal` and `-shm` files, and re-import your data.
 
-To add a profile field:
+To add a field to profiles or ratings:
 
-1. Add the field to `Profile` in `models.py`.
-2. Add its column to the `profiles` table in `SCHEMA` in `store.py`.
-3. Bump `SCHEMA_VERSION` in `store.py`.
+1. Add the field to the model in `models.py`.
+2. Add its column to `SCHEMA` in `store.py`.
 
-Insert and update statements pick up the new field automatically. A field that isn't a simple value, like `interests`, also needs converting in `_profile_to_row` and `_row_to_profile`.
+The insert and update statements pick up the new field automatically. A field that isn't a simple value, like `interests`, also needs converting in `_profile_to_row` and `_row_to_profile`.
+
+Personas are written out column by column, so a new persona field also needs adding to `save_persona` in `personas.py`.

@@ -1,48 +1,46 @@
-"""The public interface for profiles and ratings.
+"""The public interface for profiles, ratings, and personas.
 
-Code outside the data layer, especially the matching algorithm, should import
-this module and not store.py. It deliberately offers no access to personas.
+ProfileManager opens the persona database, so the matching algorithm must not use it.
+Give the matching algorithm a store.Store, which can only reach main.db.
 """
 
 import random
-from collections.abc import Mapping
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from models import Profile, Rating, generate_user_id
+from models import Persona, Profile, Rating, generate_user_id
+from personas import PersonaStore
 from store import MutualPair, ProfileNotFoundError, Store
 
 
 class ProfileManager:
     def __init__(
-        self, db_path: str | Path, rng: random.Random | int | None = None
+        self,
+        main_db_path: str | Path = "main.db",
+        persona_db_path: str | Path = "personas.db",
+        rng: random.Random | None = None,
     ) -> None:
-        """Open or create the database at db_path.
-
-        Pass a random.Random or an int seed as rng to make generated user IDs
-        reproducible. The same seed and the same sequence of add_profile calls
-        give the same IDs.
-        """
-        self._store = Store(db_path)
-        self._rng = random.Random(rng) if isinstance(rng, int) else rng
+        """Open or create both databases. A seeded rng makes generated IDs reproducible."""
+        if Path(main_db_path).resolve() == Path(persona_db_path).resolve():
+            raise ValueError("personas must be stored in a separate file from main.db")
+        self.store = Store(main_db_path)
+        self.personas = PersonaStore(persona_db_path)
+        self._rng = rng
 
     # Profiles
 
-    def add_profile(self, data: Mapping[str, Any]) -> Profile:
-        """Validate data, generate a user_id, and store the new profile."""
-        if "user_id" in data:
-            raise ValueError("user_id is generated and cannot be supplied")
-        profile = Profile.model_validate(
-            {**data, "user_id": generate_user_id(self._rng)}
-        )
-        self._store.insert_profile(profile)
+    def add_profile(self, data: dict[str, Any]) -> Profile:
+        """Validate and store a profile, generating a user_id unless data supplies one."""
+        if "user_id" not in data:
+            data = {**data, "user_id": generate_user_id(self._rng)}
+        profile = Profile.model_validate(data)
+        self.store.insert_profile(profile)
         return profile
 
     # user_id is positional-only so that passing user_id= as a change reaches the
     # check below instead of raising a confusing TypeError.
     def edit_profile(self, user_id: str, /, **changes: Any) -> Profile:
-        """Apply changes and re-validate the full profile. user_id can't be changed."""
+        """Merge changes into the profile and re-validate all of it."""
         if "user_id" in changes:
             raise ValueError("user_id is immutable")
 
@@ -50,25 +48,22 @@ class ProfileManager:
             # model_copy(update=...) would skip validation.
             return Profile.model_validate({**current.model_dump(), **changes})
 
-        return self._store.update_profile(user_id, apply)
+        return self.store.update_profile(user_id, apply)
 
-    def delete_profile(self, user_id: str, anonymize_ratings: bool = False) -> None:
-        """Delete a profile, its persona, and its ratings in every run.
-
-        With anonymize_ratings=True, the user's ratings are kept with their ID
-        replaced, and read back as models.ANONYMIZED_ID. Use this to preserve the
-        scores of past runs. No references to the deleted user remain either way.
-        """
-        self._store.delete_profile(user_id, anonymize_ratings=anonymize_ratings)
+    def delete_profile(self, user_id: str) -> None:
+        """Delete a profile, its ratings in every run, and its persona."""
+        if not self.store.profile_exists(user_id):
+            raise ProfileNotFoundError(f"no profile with user_id {user_id!r}")
+        # The two files can't share a transaction. Deleting the persona first means
+        # that if the second step fails, calling this again finishes the job.
+        self.personas.delete_persona(user_id)
+        self.store.delete_profile(user_id)
 
     def get_profile(self, user_id: str) -> Profile:
-        return self._store.get_profile(user_id)
+        return self.store.get_profile(user_id)
 
     def list_profiles(self) -> list[Profile]:
-        return self._store.list_profiles()
-
-    def export_profiles_json(self, path: str | Path) -> None:
-        self._store.export_profiles_json(path)
+        return self.store.list_all_profiles()
 
     # Ratings
 
@@ -76,33 +71,68 @@ class ProfileManager:
         self,
         rater_id: str,
         target_id: str,
-        score: int,
+        score: float,
         run_id: str,
-        timestamp: datetime | None = None,
+        model_version: str | None = None,
+        raw_output: str | None = None,
+        input_snapshot: str | None = None,
     ) -> Rating:
-        """Record a rating, replacing any earlier one for the same run and pair.
-
-        The timestamp defaults to now. A simulation can pass its own clock so that
-        runs can be replayed.
-        """
+        """Record a rating, replacing any earlier one for the same rater, target, and run."""
         rating = Rating(
             rater_id=rater_id,
             target_id=target_id,
             score=score,
-            timestamp=timestamp or datetime.now(timezone.utc),
             run_id=run_id,
+            model_version=model_version,
+            raw_output=raw_output,
+            input_snapshot=input_snapshot,
         )
         for user_id in (rater_id, target_id):
-            if not self._store.profile_exists(user_id):
+            if not self.store.profile_exists(user_id):
                 raise ProfileNotFoundError(f"no profile with user_id {user_id!r}")
-        self._store.upsert_rating(rating)
+        self.store.upsert_rating(rating)
         return rating
 
-    def ratings_by(self, rater_id: str, run_id: str | None = None) -> list[Rating]:
-        return self._store.ratings_by(rater_id, run_id)
+    def ratings_by_rater(self, rater_id: str, run_id: str | None = None) -> list[Rating]:
+        return self.store.ratings_by_rater(rater_id, run_id)
 
-    def ratings_of(self, target_id: str, run_id: str | None = None) -> list[Rating]:
-        return self._store.ratings_of(target_id, run_id)
+    def ratings_of_target(
+        self, target_id: str, run_id: str | None = None
+    ) -> list[Rating]:
+        return self.store.ratings_of_target(target_id, run_id)
 
-    def mutual_pairs(self, run_id: str, min_score: int) -> list[MutualPair]:
-        return self._store.mutual_pairs(run_id, min_score)
+    def mutual_pairs(
+        self, min_score: float, run_id: str | None = None
+    ) -> list[MutualPair]:
+        return self.store.mutual_pairs(min_score, run_id)
+
+    def already_rated_pairs(self, run_id: str) -> set[tuple[str, str]]:
+        return self.store.already_rated_pairs(run_id)
+
+    def count_profiles(self) -> int:
+        return self.store.count_profiles()
+
+    def count_ratings(self, run_id: str | None = None) -> int:
+        return self.store.count_ratings(run_id)
+
+    # Personas
+
+    def add_persona(
+        self,
+        user_id: str,
+        description: str,
+        generation_seeds: dict[str, Any] | None = None,
+    ) -> Persona:
+        """Store a persona for an existing profile, replacing any earlier one."""
+        if not self.store.profile_exists(user_id):
+            raise ProfileNotFoundError(f"no profile with user_id {user_id!r}")
+        persona = Persona(
+            user_id=user_id,
+            description=description,
+            generation_seeds=generation_seeds if generation_seeds is not None else {},
+        )
+        self.personas.save_persona(persona)
+        return persona
+
+    def get_persona(self, user_id: str) -> Persona | None:
+        return self.personas.get_persona(user_id)
