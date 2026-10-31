@@ -3,19 +3,43 @@ import logging
 import random
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 
+import httpx2
 import pytest
 from pydantic import ValidationError
+from typesafe_sdk import RetryPolicy, TypeSafeClient, TypeSafeError
 
 import raters
 from manager import ProfileManager
-from matching import Matcher, PublicView, RandomMatcher
+from matching import (
+    CompatibleRandomMatcher,
+    Matcher,
+    PublicView,
+    RandomMatcher,
+    is_compatible,
+)
+from metrics import compute_metrics, learning_curve
 from models import Persona, Profile, Rating, generate_user_id
 from personas import PersonaStore
-from raters import FakeRater, JevRater, Rater, RatingResult, build_rater_input
-from simulation import NoEligibleUsersError, run_simulation
+from raters import (
+    JEV_MODEL,
+    JEV_QUESTION,
+    FakeRater,
+    JevRater,
+    Rater,
+    RatingResult,
+    build_jev_state,
+    build_rater_input,
+)
+from simulation import (
+    MAX_CONSECUTIVE_FAILURES,
+    NoEligibleUsersError,
+    RunAbortedError,
+    run_simulation,
+)
 from store import DuplicateRunError, Store
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -111,7 +135,7 @@ def test_random_matcher_skips_self_and_never_repeats(manager: ProfileManager) ->
         target = matcher.next_profile(user, view)
         assert target is not None
         shown.append(target)
-        manager.add_rating(user, target, 5.0, RUN)
+        manager.add_rating(user, target, 0.5, RUN)
 
     assert user not in shown
     assert len(set(shown)) == len(shown)
@@ -125,7 +149,7 @@ def test_random_matcher_returns_none_when_user_has_seen_everyone(
     view = PublicView(manager.store, RUN)
     matcher = RandomMatcher(random.Random(SEED))
     for target in users[1:]:
-        manager.add_rating(users[0], target, 5.0, RUN)
+        manager.add_rating(users[0], target, 0.5, RUN)
     assert matcher.next_profile(users[0], view) is None
 
 
@@ -139,7 +163,7 @@ def test_random_matcher_returns_none_when_user_is_alone(
 
 def test_random_matcher_only_counts_current_run(manager: ProfileManager) -> None:
     alice, bob = add_users(manager, 2)
-    manager.add_rating(alice, bob, 5.0, "other-run")
+    manager.add_rating(alice, bob, 0.5, "other-run")
     view = PublicView(manager.store, RUN)
     assert RandomMatcher(random.Random(SEED)).next_profile(alice, view) == bob
 
@@ -204,7 +228,7 @@ def test_full_run_stores_expected_ratings(manager: ProfileManager) -> None:
     transcripts = manager.transcripts_in_run(RUN)
     assert len(transcripts) == expected
     assert all(t.raw_output and t.input_snapshot for t in transcripts)
-    assert all(1.0 <= r.score <= 10.0 for r in ratings)
+    assert all(0.0 <= r.score <= 1.0 for r in ratings)
     assert summary.mean_score == pytest.approx(
         sum(r.score for r in ratings) / expected
     )
@@ -270,7 +294,7 @@ def test_run_records_metadata(manager: ProfileManager) -> None:
     run = manager.get_run(RUN)
     assert run.matcher_name == RandomMatcher.name
     assert run.seed == SEED
-    assert run.config == {"n_steps": 2, "rater": "FakeRater", "eligible_users": 3}
+    assert run.config == {"n_steps": 2, "rater": "FakeRater", "eligible_users": 3, "n_workers": 1}
     assert run.finished_at is not None
     assert run.finished_at >= run.started_at
 
@@ -291,7 +315,7 @@ def test_failing_rater_is_counted_and_run_finishes(
     manager: ProfileManager, caplog: pytest.LogCaptureFixture
 ) -> None:
     add_users(manager, 4)
-    rater = ScriptedRater([7.0, RuntimeError("boom"), 8.0, RuntimeError("boom"), 9.0])
+    rater = ScriptedRater([0.7, RuntimeError("boom"), 0.8, RuntimeError("boom"), 0.9])
 
     with caplog.at_level(logging.ERROR):
         summary = run_simulation(
@@ -300,7 +324,7 @@ def test_failing_rater_is_counted_and_run_finishes(
 
     assert summary.steps_completed == 3
     assert summary.failures == 2
-    assert summary.mean_score == pytest.approx(8.0)
+    assert summary.mean_score == pytest.approx(0.8)
     assert [r.step for r in manager.ratings_in_run(RUN)] == [1, 3, 5]
     assert manager.get_run(RUN).finished_at is not None
     assert "boom" in caplog.text
@@ -318,7 +342,7 @@ def test_run_where_every_rating_fails_has_no_mean(manager: ProfileManager) -> No
     assert manager.get_run(RUN).finished_at is not None
 
 
-@pytest.mark.parametrize("raw, saved", [(12.5, 10.0), (0.2, 1.0), (7.35, 7.35)])
+@pytest.mark.parametrize("raw, saved", [(1.5, 1.0), (-0.2, 0.0), (0.735, 0.735)])
 def test_scores_are_clamped_when_saved(
     manager: ProfileManager, raw: float, saved: float
 ) -> None:
@@ -369,13 +393,13 @@ def test_matcher_repeating_a_profile_cannot_overwrite_a_rating(
     rater = add_users(manager, 1)[0]
     target = add_users(manager, 1, persona=False)[0]
     summary = run_simulation(
-        manager, RepeatingMatcher(target), ScriptedRater([4.0, 9.0, 9.0]), RUN, 3, SEED
+        manager, RepeatingMatcher(target), ScriptedRater([0.4, 0.9, 0.9]), RUN, 3, SEED
     )
     assert summary.steps_completed == 1
     assert summary.failures == 2
-    assert summary.mean_score == 4.0
+    assert summary.mean_score == 0.4
     stored = manager.ratings_by_rater(rater, RUN)
-    assert [(r.target_id, r.score, r.step) for r in stored] == [(target, 4.0, 1)]
+    assert [(r.target_id, r.score, r.step) for r in stored] == [(target, 0.4, 1)]
 
 
 def test_matcher_returning_unknown_profile_counts_as_failure(
@@ -413,7 +437,7 @@ def test_matcher_exception_propagates_and_leaves_run_unfinished(
 def test_observe_is_called_after_each_saved_rating(manager: ProfileManager) -> None:
     add_users(manager, 4)
     matcher = RecordingMatcher(random.Random(SEED))
-    rater = ScriptedRater([5.0, RuntimeError("boom"), 6.0, 7.0])
+    rater = ScriptedRater([0.5, RuntimeError("boom"), 0.6, 0.7])
 
     run_simulation(manager, matcher, rater, RUN, 4, SEED)
 
@@ -582,7 +606,7 @@ def test_main_database_holds_no_persona_text_after_a_run(
 
 def test_view_ratings_only_cover_its_run(manager: ProfileManager) -> None:
     alice, bob = add_users(manager, 2)
-    manager.add_rating(alice, bob, 5.0, "other-run")
+    manager.add_rating(alice, bob, 0.5, "other-run")
     view = PublicView(manager.store, RUN)
     assert view.ratings_by_rater(alice) == []
     assert view.ratings_of_target(bob) == []
@@ -618,11 +642,7 @@ def test_build_rater_input_has_expected_structure() -> None:
     assert rater_input["target_profile"] == target.model_dump(exclude={"agent"})
     assert "agent" not in rater_input["rater_profile"]
     assert "agent" not in rater_input["target_profile"]
-    assert rater_input["scale"]["anchors"] == {
-        "1": "no interest",
-        "5": "neutral",
-        "10": "would message immediately",
-    }
+    assert "scale" not in rater_input
     json.dumps(rater_input)
 
 
@@ -651,7 +671,7 @@ def test_fake_rater_scores_are_in_range_and_rounded() -> None:
     fake = FakeRater(random.Random(SEED))
     for _ in range(200):
         score = fake.rate(rater, persona, target).score
-        assert 1.0 <= score <= 10.0
+        assert 0.0 <= score <= 1.0
         assert score == round(score, 2)
 
 
@@ -663,12 +683,6 @@ def test_fake_rater_is_reproducible() -> None:
         assert first.rate(rater, persona, target) == second.rate(rater, persona, target)
 
 
-def test_jev_rater_is_a_clearly_marked_stub() -> None:
-    rater, persona, target, _ = make_people()
-    with pytest.raises(NotImplementedError, match="Jev API integration is pending"):
-        JevRater().rate(rater, persona, target)
-
-
 def test_jev_rater_only_needs_call_jev_replaced(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -677,15 +691,511 @@ def test_jev_rater_only_needs_call_jev_replaced(
 
     def fake_call(rater_input: dict[str, Any]) -> tuple[float, str]:
         received.append(rater_input)
-        return 7.5, '{"score": 7.5}'
+        return 0.75, '{"noul": 0.75}'
 
     monkeypatch.setattr(raters, "_call_jev", fake_call)
     result = JevRater().rate(rater, persona, target)
 
-    assert result.score == 7.5
-    assert result.raw_output == '{"score": 7.5}'
+    assert result.score == 0.75
+    assert result.raw_output == '{"noul": 0.75}'
     assert json.loads(result.input_snapshot) == received[0]
     assert received[0] == build_rater_input(rater, persona, target)
+
+
+# Jev. These use the real SDK with a fake network layer, so no API call can be made.
+
+
+def jev_reply(noul: float = 0.65, status_code: int = 200) -> httpx2.Response:
+    return httpx2.Response(
+        status_code,
+        json={
+            "model": JEV_MODEL,
+            "answers": {"like": {"type": "noul", "noul": noul}},
+            "usage": {"input_tokens": 700, "output_tokens": 18},
+        },
+    )
+
+
+def use_fake_jev(monkeypatch: pytest.MonkeyPatch, replies: list[httpx2.Response]) -> list[Any]:
+    """Send Jev calls to the given replies, and return the list of request bodies sent."""
+    requests = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(json.loads(request.content))
+        return replies.pop(0)
+
+    client = TypeSafeClient(
+        api_key="test-key",
+        model=JEV_MODEL,
+        transport=httpx2.MockTransport(handler),
+        retry=RetryPolicy(max_retries=2, backoff_initial=0, backoff_max=0, backoff_jitter=0),
+        compression=False,
+    )
+    monkeypatch.setattr(raters, "_jev_client", lambda: client)
+    return requests
+
+
+@pytest.mark.parametrize("noul", [0.0, 0.42, 1.0])
+def test_jev_probability_is_saved_as_the_score(
+    monkeypatch: pytest.MonkeyPatch, noul: float
+) -> None:
+    use_fake_jev(monkeypatch, [jev_reply(noul)])
+    rater, persona, target, _ = make_people()
+    assert JevRater().rate(rater, persona, target).score == noul
+
+
+def test_jev_request_and_saved_output(monkeypatch: pytest.MonkeyPatch) -> None:
+    requests = use_fake_jev(monkeypatch, [jev_reply()])
+    rater, persona, target, _ = make_people()
+
+    result = JevRater().rate(rater, persona, target)
+
+    assert requests[0]["model"] == JEV_MODEL
+    assert requests[0]["questions"]["like"]["type"] == "noul"
+    assert requests[0]["questions"]["like"]["instructions"] == JEV_QUESTION.instructions
+    assert requests[0]["state"]["rater_persona"] == "RATER_PERSONA_TEXT"
+    assert result.model_version == JEV_MODEL
+    assert json.loads(result.raw_output) == {
+        "model": JEV_MODEL,
+        "noul": 0.65,
+        "input_tokens": 700,
+    }
+
+
+def test_jev_request_holds_nothing_hidden(monkeypatch: pytest.MonkeyPatch) -> None:
+    requests = use_fake_jev(monkeypatch, [jev_reply()])
+    rater, persona, target, target_persona = make_people()
+    JevRater().rate(rater, persona, target)
+    sent = json.dumps(requests[0])
+    assert "TARGET_PERSONA_TEXT" not in sent
+    assert "TARGET_SEED_VALUE" not in sent
+    assert "RATER_SEED_VALUE" not in sent
+    assert rater.user_id not in sent
+    assert target.user_id not in sent
+    assert '"agent"' not in sent
+
+
+def test_jev_state_leaves_out_user_ids() -> None:
+    rater, persona, target, _ = make_people()
+    state = build_jev_state(build_rater_input(rater, persona, target))
+    assert state["shown_profile"]["name"] == "Tess"
+    assert "user_id" not in state["rater"]
+    assert "user_id" not in state["shown_profile"]
+
+
+def test_jev_rate_limits_are_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    requests = use_fake_jev(monkeypatch, [httpx2.Response(429, json={}), jev_reply(0.4)])
+    rater, persona, target, _ = make_people()
+    assert JevRater().rate(rater, persona, target).score == 0.4
+    assert len(requests) == 2
+
+
+def test_jev_failure_is_counted_and_the_run_continues(
+    manager: ProfileManager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    add_users(manager, 3)
+    use_fake_jev(monkeypatch, [httpx2.Response(400, json={}), jev_reply(), jev_reply()])
+    summary = run_simulation(
+        manager, RandomMatcher(random.Random(SEED)), JevRater(), RUN, 3, SEED
+    )
+    assert summary.steps_completed == 2
+    assert summary.failures == 1
+    assert manager.ratings_in_run(RUN)[0].model_version == JEV_MODEL
+
+
+def test_jev_without_an_api_key_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    raters._jev_client.cache_clear()
+    rater, persona, target, _ = make_people()
+    with pytest.raises(TypeSafeError, match="API key"):
+        JevRater().rate(rater, persona, target)
+    raters._jev_client.cache_clear()
+
+
+# Compatibility
+
+
+def public_user(manager: ProfileManager, gender: str, interested_in: str) -> str:
+    data = {**profile_data(), "gender": gender, "interested_in": interested_in}
+    user_id = manager.add_profile(data).user_id
+    manager.add_persona(user_id, f"SECRET_PERSONA_{user_id}")
+    return user_id
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "expected"),
+    [
+        (("man", "women"), ("woman", "men"), True),
+        (("man", "men"), ("man", "men"), True),
+        (("woman", "women"), ("woman", "women"), True),
+        (("man", "women"), ("man", "men"), False),
+        (("man", "women"), ("woman", "women"), False),
+        (("man", "men"), ("woman", "men"), False),
+    ],
+)
+def test_is_compatible_needs_interest_both_ways(
+    manager: ProfileManager,
+    first: tuple[str, str],
+    second: tuple[str, str],
+    expected: bool,
+) -> None:
+    view = PublicView(manager.store, RUN)
+    a = view.get_profile(public_user(manager, *first))
+    b = view.get_profile(public_user(manager, *second))
+    assert is_compatible(a, b) is expected
+    assert is_compatible(b, a) is expected
+
+
+def test_compatible_matcher_only_shows_compatible_profiles(
+    manager: ProfileManager,
+) -> None:
+    for gender, interested_in in [
+        ("man", "women"),
+        ("man", "women"),
+        ("woman", "men"),
+        ("woman", "men"),
+        ("man", "men"),
+        ("man", "men"),
+        ("woman", "women"),
+    ]:
+        public_user(manager, gender, interested_in)
+
+    summary = run_simulation(
+        manager,
+        CompatibleRandomMatcher(random.Random(SEED)),
+        FakeRater(random.Random(SEED)),
+        RUN,
+        50,
+        SEED,
+    )
+
+    # 2 x 2 opposite-gender pairs in each direction, plus one pair of men both ways. The
+    # woman interested in women has nobody compatible, so uses no steps.
+    assert summary.steps_completed == 10
+    assert summary.failures == 0
+    assert summary.users_exhausted == 7
+    profiles = {p.user_id: p for p in manager.list_profiles()}
+    for rating in manager.ratings_in_run(RUN):
+        assert is_compatible(profiles[rating.rater_id], profiles[rating.target_id])
+
+
+def test_compatible_matcher_runs_are_reproducible(tmp_path: Path) -> None:
+    runs = []
+    for name in ("a", "b"):
+        manager = ProfileManager(
+            tmp_path / f"{name}.db",
+            tmp_path / f"{name}_personas.db",
+            rng=random.Random(SEED),
+        )
+        for gender, interested_in in [("man", "women"), ("woman", "men")] * 3:
+            public_user(manager, gender, interested_in)
+        run_simulation(
+            manager,
+            CompatibleRandomMatcher(random.Random(SEED)),
+            FakeRater(random.Random(SEED)),
+            RUN,
+            8,
+            SEED,
+        )
+        runs.append(
+            [(r.rater_id, r.target_id, r.score) for r in manager.ratings_in_run(RUN)]
+        )
+    assert runs[0] == runs[1]
+
+
+# Metrics
+
+
+def test_learning_curve_averages_windows_in_order() -> None:
+    assert learning_curve([1.0, 3.0, 5.0, 7.0], 2) == [2.0, 6.0]
+    assert learning_curve([2.0, 4.0], 10) == [2.0, 4.0]
+    assert learning_curve([], 10) == []
+
+
+def test_metrics_count_compatibility_and_match_chances(manager: ProfileManager) -> None:
+    man = public_user(manager, "man", "women")
+    woman = public_user(manager, "woman", "men")
+    other_woman = public_user(manager, "woman", "men")
+    other_man = public_user(manager, "man", "women")
+    manager.start_run(RUN, "test", SEED, {})
+    manager.add_rating(man, woman, 0.8, RUN, step=1)  # Rated both ways.
+    manager.add_rating(woman, man, 0.7, RUN, step=2)
+    manager.add_rating(man, other_woman, 0.9, RUN, step=3)  # Rated both ways.
+    manager.add_rating(other_woman, man, 0.5, RUN, step=4)
+    manager.add_rating(man, other_man, 0.1, RUN, step=5)  # One way, and not compatible.
+
+    metrics = compute_metrics(manager.store, RUN, n_windows=5)
+
+    assert metrics.n_ratings == 5
+    assert metrics.mean_score == pytest.approx(3.0 / 5)
+    assert metrics.compatible_share == pytest.approx(4 / 5)
+    assert metrics.pairs_rated_both_ways == 2
+    assert metrics.expected_matches == pytest.approx(0.8 * 0.7 + 0.9 * 0.5)
+    assert metrics.match_rate == pytest.approx((0.8 * 0.7 + 0.9 * 0.5) / 2)
+    assert metrics.learning_curve == [0.8, 0.7, 0.9, 0.5, 0.1]
+
+
+def test_metrics_ignore_other_runs(manager: ProfileManager) -> None:
+    man = public_user(manager, "man", "women")
+    woman = public_user(manager, "woman", "men")
+    manager.start_run(RUN, "test", SEED, {})
+    manager.start_run("other", "test", SEED, {})
+    manager.add_rating(man, woman, 0.9, RUN, step=1)
+    manager.add_rating(woman, man, 0.9, "other", step=1)
+    metrics = compute_metrics(manager.store, RUN)
+    assert metrics.n_ratings == 1
+    assert metrics.pairs_rated_both_ways == 0
+    assert metrics.expected_matches == 0
+    assert metrics.match_rate is None
+
+
+def test_metrics_of_an_empty_run(manager: ProfileManager) -> None:
+    add_users(manager, 2)
+    manager.start_run(RUN, "test", SEED, {})
+    metrics = compute_metrics(manager.store, RUN)
+    assert metrics.n_ratings == 0
+    assert metrics.mean_score is None
+    assert metrics.compatible_share is None
+    assert metrics.match_rate is None
+    assert metrics.learning_curve == []
+
+
+# Resuming
+
+
+class StopsAtCall(RandomMatcher):
+    """Raises on a chosen call to next_profile, like a run being interrupted."""
+
+    def __init__(self, rng: random.Random, stop_at: int) -> None:
+        super().__init__(rng)
+        self.calls = 0
+        self.stop_at = stop_at
+        self.observed: list[Rating] = []
+
+    def next_profile(self, user_id: str, view: PublicView) -> str | None:
+        self.calls += 1
+        if self.calls == self.stop_at:
+            raise KeyboardInterrupt
+        return super().next_profile(user_id, view)
+
+    def observe(self, rating: Rating) -> None:
+        self.observed.append(rating)
+
+
+def fake_run(manager: ProfileManager, matcher: Matcher, n_steps: int = 12, **kwargs: Any) -> Any:
+    return run_simulation(manager, matcher, FakeRater(random.Random(SEED)), RUN, n_steps, SEED, **kwargs)
+
+
+def test_interrupted_run_resumes_to_the_total_without_repeats(manager: ProfileManager) -> None:
+    add_users(manager, 6)
+    with pytest.raises(KeyboardInterrupt):
+        fake_run(manager, StopsAtCall(random.Random(SEED), stop_at=6))
+    assert manager.count_ratings(RUN) == 5
+    assert manager.get_run(RUN).finished_at is None
+    before = manager.ratings_in_run(RUN)
+
+    summary = fake_run(manager, RandomMatcher(random.Random(SEED + 1)), resume=True)
+
+    ratings = manager.ratings_in_run(RUN)
+    assert summary.steps_completed == 12
+    assert summary.failures == 0
+    assert [r.step for r in ratings] == list(range(1, 13))
+    assert ratings[:5] == before
+    assert len({(r.rater_id, r.target_id) for r in ratings}) == 12
+    assert summary.mean_score == pytest.approx(sum(r.score for r in ratings) / 12)
+    assert manager.get_run(RUN).finished_at is not None
+
+
+def test_resume_replays_saved_ratings_to_the_matcher(manager: ProfileManager) -> None:
+    add_users(manager, 6)
+    with pytest.raises(KeyboardInterrupt):
+        fake_run(manager, StopsAtCall(random.Random(SEED), stop_at=4))
+    saved = manager.ratings_in_run(RUN)
+
+    matcher = StopsAtCall(random.Random(SEED + 1), stop_at=-1)
+    fake_run(manager, matcher, n_steps=5, resume=True)
+
+    assert matcher.observed[:3] == saved
+    assert len(matcher.observed) == 5
+
+
+def test_resume_starts_a_new_run_if_there_is_none(manager: ProfileManager) -> None:
+    add_users(manager, 4)
+    summary = fake_run(manager, RandomMatcher(random.Random(SEED)), n_steps=3, resume=True)
+    assert summary.steps_completed == 3
+    assert manager.get_run(RUN).finished_at is not None
+
+
+def test_resume_refuses_a_finished_run(manager: ProfileManager) -> None:
+    add_users(manager, 4)
+    fake_run(manager, RandomMatcher(random.Random(SEED)), n_steps=3)
+    with pytest.raises(ValueError, match="already finished"):
+        fake_run(manager, RandomMatcher(random.Random(SEED)), n_steps=5, resume=True)
+    assert manager.count_ratings(RUN) == 3
+
+
+def test_resume_refuses_a_different_matcher(manager: ProfileManager) -> None:
+    add_users(manager, 6)
+    with pytest.raises(KeyboardInterrupt):
+        fake_run(manager, StopsAtCall(random.Random(SEED), stop_at=3))
+    with pytest.raises(ValueError, match="used matcher"):
+        fake_run(manager, CompatibleRandomMatcher(random.Random(SEED)), resume=True)
+
+
+def test_without_resume_an_existing_run_id_is_still_rejected(manager: ProfileManager) -> None:
+    add_users(manager, 4)
+    fake_run(manager, RandomMatcher(random.Random(SEED)), n_steps=2)
+    with pytest.raises(DuplicateRunError):
+        fake_run(manager, RandomMatcher(random.Random(SEED)), n_steps=2)
+
+
+def test_outage_aborts_the_run_so_it_can_be_resumed(manager: ProfileManager) -> None:
+    add_users(manager, 8)
+    outage = [RuntimeError("down")] * MAX_CONSECUTIVE_FAILURES
+    rater = ScriptedRater([0.5, *outage])
+    with pytest.raises(RunAbortedError, match="in a row"):
+        run_simulation(manager, RandomMatcher(random.Random(SEED)), rater, RUN, 500, SEED)
+    assert manager.count_ratings(RUN) == 1
+    assert manager.get_run(RUN).finished_at is None
+
+    summary = fake_run(manager, RandomMatcher(random.Random(SEED)), n_steps=5, resume=True)
+    assert summary.steps_completed == 5
+    assert summary.failures == 0
+
+
+def test_scattered_failures_do_not_abort_the_run(manager: ProfileManager) -> None:
+    add_users(manager, 12)
+    below_limit = [RuntimeError("blip")] * (MAX_CONSECUTIVE_FAILURES - 1)
+    rater = ScriptedRater([*below_limit, 0.5, *below_limit, 0.6])
+    summary = run_simulation(
+        manager, RandomMatcher(random.Random(SEED)), rater, RUN, 2 * MAX_CONSECUTIVE_FAILURES, SEED
+    )
+    assert summary.steps_completed == 2
+    assert summary.failures == 2 * MAX_CONSECUTIVE_FAILURES - 2
+
+
+# Parallel ratings
+
+
+class SlowFakeRater(FakeRater):
+    """Only succeeds if four ratings are in progress at the same time."""
+
+    def __init__(self, rng: random.Random) -> None:
+        super().__init__(rng)
+        self.barrier = threading.Barrier(4, timeout=10)
+
+    def rate(self, rater_profile: Profile, rater_persona: Persona, target_profile: Profile) -> RatingResult:
+        self.barrier.wait()
+        return super().rate(rater_profile, rater_persona, target_profile)
+
+
+def test_ratings_really_run_at_the_same_time(manager: ProfileManager) -> None:
+    add_users(manager, 6)
+    summary = run_simulation(
+        manager, RandomMatcher(random.Random(SEED)), SlowFakeRater(random.Random(SEED)), RUN, 8, SEED, n_workers=4
+    )
+    assert summary.steps_completed == 8
+    assert summary.failures == 0
+
+
+@pytest.mark.parametrize("n_workers", [2, 8])
+def test_parallel_run_saves_every_rating_once_and_in_order(manager: ProfileManager, n_workers: int) -> None:
+    add_users(manager, 10)
+    matcher = RecordingMatcher(random.Random(SEED))
+    summary = run_simulation(matcher=matcher, manager=manager, rater=FakeRater(random.Random(SEED)), run_id=RUN, n_steps=40, seed=SEED, n_workers=n_workers)
+    ratings = manager.ratings_in_run(RUN)
+    assert summary.steps_completed == 40
+    assert [r.step for r in ratings] == list(range(1, 41))
+    assert len({(r.rater_id, r.target_id) for r in ratings}) == 40
+    assert [r.step for r in matcher.observed] == list(range(1, 41))
+    assert len(manager.transcripts_in_run(RUN)) == 40
+    assert manager.get_run(RUN).finished_at is not None
+
+
+def test_batches_never_go_past_n_steps(manager: ProfileManager) -> None:
+    add_users(manager, 8)
+    summary = fake_run(manager, RandomMatcher(random.Random(SEED)), n_steps=11, n_workers=8)
+    assert summary.steps_completed == 11
+    assert manager.count_ratings(RUN) == 11
+
+
+def test_parallel_run_finishes_when_almost_nothing_is_left(manager: ProfileManager) -> None:
+    add_users(manager, 2)
+    summary = fake_run(manager, RandomMatcher(random.Random(SEED)), n_steps=50, n_workers=8)
+    assert summary.steps_completed == 2
+    assert summary.users_exhausted == 2
+
+
+def test_parallel_failures_leave_gaps_and_the_run_continues(manager: ProfileManager) -> None:
+    add_users(manager, 8)
+
+    class FailsSometimes(FakeRater):
+        def rate(self, rater_profile: Profile, rater_persona: Persona, target_profile: Profile) -> RatingResult:
+            if target_profile.user_id == failing_target:
+                raise RuntimeError("boom")
+            return super().rate(rater_profile, rater_persona, target_profile)
+
+    failing_target = manager.list_profiles()[0].user_id
+    summary = run_simulation(
+        manager, RandomMatcher(random.Random(SEED)), FailsSometimes(random.Random(SEED)), RUN, 30, SEED, n_workers=4
+    )
+    ratings = manager.ratings_in_run(RUN)
+    assert summary.failures > 0
+    assert summary.steps_completed + summary.failures == 30
+    assert all(r.target_id != failing_target for r in ratings)
+    assert [r.step for r in ratings] == sorted(r.step for r in ratings)
+
+
+def test_parallel_outage_aborts_and_can_be_resumed(manager: ProfileManager) -> None:
+    add_users(manager, 10)
+
+    class AlwaysDown(FakeRater):
+        def rate(self, rater_profile: Profile, rater_persona: Persona, target_profile: Profile) -> RatingResult:
+            raise RuntimeError("down")
+
+    with pytest.raises(RunAbortedError):
+        run_simulation(manager, RandomMatcher(random.Random(SEED)), AlwaysDown(random.Random(SEED)), RUN, 500, SEED, n_workers=8)
+    assert manager.get_run(RUN).finished_at is None
+    summary = fake_run(manager, RandomMatcher(random.Random(SEED)), n_steps=20, resume=True, n_workers=8)
+    assert summary.steps_completed == 20
+
+
+def test_one_worker_gives_the_same_run_as_before_batching(tmp_path: Path) -> None:
+    runs = []
+    for name in ("a", "b"):
+        manager = ProfileManager(tmp_path / f"{name}.db", tmp_path / f"{name}_p.db", rng=random.Random(SEED))
+        add_users(manager, 5)
+        fake_run(manager, CompatibleRandomMatcher(random.Random(SEED)), n_steps=10)
+        runs.append([(r.rater_id, r.target_id, r.score, r.step) for r in manager.ratings_in_run(RUN)])
+    assert runs[0] == runs[1]
+
+
+def test_n_workers_must_be_positive(manager: ProfileManager) -> None:
+    add_users(manager, 2)
+    with pytest.raises(ValueError, match="n_workers"):
+        fake_run(manager, RandomMatcher(random.Random(SEED)), n_workers=0)
+
+
+def test_compatible_matcher_reads_profiles_only_once(manager: ProfileManager, monkeypatch: pytest.MonkeyPatch) -> None:
+    add_users(manager, 6)
+    calls = []
+    original = PublicView.list_profiles
+    monkeypatch.setattr(PublicView, "list_profiles", lambda self: calls.append(1) or original(self))
+    summary = fake_run(manager, CompatibleRandomMatcher(random.Random(SEED)), n_steps=10)
+    assert len(calls) == 1
+    assert summary.steps_completed == 0  # Every test user is the same gender, so none match.
+
+
+def test_compatible_matcher_never_repeats_or_picks_self(manager: ProfileManager) -> None:
+    men = [public_user(manager, "man", "women") for _ in range(3)]
+    women = [public_user(manager, "woman", "men") for _ in range(3)]
+    fake_run(manager, CompatibleRandomMatcher(random.Random(SEED)), n_steps=100, n_workers=4)
+    ratings = manager.ratings_in_run(RUN)
+    assert len(ratings) == 18
+    assert {(r.rater_id, r.target_id) for r in ratings} == {
+        *((a, b) for a in men for b in women),
+        *((b, a) for a in men for b in women),
+    }
 
 
 def test_baseline_script_runs() -> None:

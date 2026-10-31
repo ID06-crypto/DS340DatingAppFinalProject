@@ -1,4 +1,8 @@
-"""Generate a random persona for each simulated user and add it to personas.db.
+"""SUPERSEDED by written_personas.py, because Jev barely responds to trait scores.
+
+This is kept so the original dataset and the persona test notebooks can be reproduced.
+
+Generate a random persona for each simulated user and add it to personas.db.
 
 A persona's scores are stored as JSON in its description, because that's the part of a
 persona that raters are shown. Read them back with json.loads(persona.description).

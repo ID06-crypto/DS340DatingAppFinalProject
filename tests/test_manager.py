@@ -332,10 +332,10 @@ def test_add_rating_stores_all_fields(manager: ProfileManager) -> None:
     rating = manager.add_rating(
         alice,
         bob,
-        7.5,
+        0.75,
         RUN,
         model_version="model-1",
-        raw_output='{"score": 7.5}',
+        raw_output='{"score": 0.75}',
         input_snapshot="what the rater saw",
     )
     assert rating.timestamp.utcoffset() is not None
@@ -345,13 +345,13 @@ def test_add_rating_stores_all_fields(manager: ProfileManager) -> None:
     assert manager.ratings_by_rater(bob) == []
     assert manager.ratings_of_target(alice) == []
     transcript = manager.get_transcript(alice, bob, RUN)
-    assert transcript.raw_output == '{"score": 7.5}'
+    assert transcript.raw_output == '{"score": 0.75}'
     assert transcript.input_snapshot == "what the rater saw"
     assert manager.transcripts_in_run(RUN) == [transcript]
     assert manager.transcripts_in_run("other-run") == []
 
 
-@pytest.mark.parametrize("score", [7.35, 1.0, 10.0, 3.3333333333333335, 1.0000001])
+@pytest.mark.parametrize("score", [0.735, 0.0, 1.0, 0.33333333333333335, 0.0000001])
 def test_float_scores_round_trip_exactly(
     manager: ProfileManager, score: float
 ) -> None:
@@ -362,14 +362,14 @@ def test_float_scores_round_trip_exactly(
 
 def test_whole_number_score_is_stored_as_float(manager: ProfileManager) -> None:
     alice, bob = add_users(manager, 2)
-    manager.add_rating(alice, bob, 7, RUN)
+    manager.add_rating(alice, bob, 1, RUN)
     stored = manager.ratings_by_rater(alice)[0].score
-    assert stored == 7.0
+    assert stored == 1.0
     assert isinstance(stored, float)
 
 
 @pytest.mark.parametrize(
-    "score", [0.9, 10.1, 0, -1.0, float("nan"), float("inf"), "7.5", True, None]
+    "score", [-0.1, 1.1, 2, -1.0, float("nan"), float("inf"), "0.75", True, None]
 )
 def test_add_rating_rejects_bad_score(manager: ProfileManager, score: Any) -> None:
     alice, bob = add_users(manager, 2)
@@ -381,23 +381,23 @@ def test_add_rating_rejects_bad_score(manager: ProfileManager, score: Any) -> No
 def test_self_rating_rejected(manager: ProfileManager) -> None:
     alice = add_users(manager, 1)[0]
     with pytest.raises(ValidationError, match="rate themselves"):
-        manager.add_rating(alice, alice, 5.0, RUN)
+        manager.add_rating(alice, alice, 0.5, RUN)
     assert manager.count_ratings() == 0
 
 
 def test_rating_nonexistent_user_rejected(manager: ProfileManager) -> None:
     alice = add_users(manager, 1)[0]
     with pytest.raises(ProfileNotFoundError):
-        manager.add_rating(alice, "missing", 5.0, RUN)
+        manager.add_rating(alice, "missing", 0.5, RUN)
     with pytest.raises(ProfileNotFoundError):
-        manager.add_rating("missing", alice, 5.0, RUN)
+        manager.add_rating("missing", alice, 0.5, RUN)
     assert manager.count_ratings() == 0
 
 
 def test_rerating_overwrites_within_a_run(manager: ProfileManager) -> None:
     alice, bob = add_users(manager, 2)
-    manager.add_rating(alice, bob, 3.0, RUN, model_version="old", raw_output="old")
-    newer = manager.add_rating(alice, bob, 9.0, RUN, model_version="new")
+    manager.add_rating(alice, bob, 0.3, RUN, model_version="old", raw_output="old")
+    newer = manager.add_rating(alice, bob, 0.9, RUN, model_version="new")
     assert manager.ratings_by_rater(alice) == [newer]
     # The old transcript belonged to the replaced rating, so it mustn't linger.
     assert manager.get_transcript(alice, bob, RUN) is None
@@ -406,8 +406,8 @@ def test_rerating_overwrites_within_a_run(manager: ProfileManager) -> None:
 
 def test_rerating_replaces_transcript(manager: ProfileManager) -> None:
     alice, bob = add_users(manager, 2)
-    manager.add_rating(alice, bob, 3.0, RUN, raw_output="old", input_snapshot="old")
-    manager.add_rating(alice, bob, 9.0, RUN, raw_output="new")
+    manager.add_rating(alice, bob, 0.3, RUN, raw_output="old", input_snapshot="old")
+    manager.add_rating(alice, bob, 0.9, RUN, raw_output="new")
     transcript = manager.get_transcript(alice, bob, RUN)
     assert transcript.raw_output == "new"
     assert transcript.input_snapshot is None
@@ -417,16 +417,16 @@ def test_rating_without_transcript_data_stores_no_transcript(
     manager: ProfileManager,
 ) -> None:
     alice, bob = add_users(manager, 2)
-    manager.add_rating(alice, bob, 5.0, RUN)
+    manager.add_rating(alice, bob, 0.5, RUN)
     assert manager.get_transcript(alice, bob, RUN) is None
 
 
 def test_invalid_rating_stores_no_transcript(manager: ProfileManager) -> None:
     alice, bob = add_users(manager, 2)
     with pytest.raises(ValidationError):
-        manager.add_rating(alice, bob, 11.0, RUN, raw_output="x")
+        manager.add_rating(alice, bob, 1.1, RUN, raw_output="x")
     with pytest.raises(ProfileNotFoundError):
-        manager.add_rating(alice, "missing", 5.0, RUN, raw_output="x")
+        manager.add_rating(alice, "missing", 0.5, RUN, raw_output="x")
     assert manager.transcripts_in_run(RUN) == []
 
 
@@ -440,7 +440,7 @@ def test_saved_rating_always_has_its_transcript(
 
     monkeypatch.setattr(manager.personas, "save_transcript", fail)
     with pytest.raises(sqlite3.OperationalError):
-        manager.add_rating(alice, bob, 5.0, RUN, raw_output="x")
+        manager.add_rating(alice, bob, 0.5, RUN, raw_output="x")
     assert manager.count_ratings() == 0
 
 
@@ -449,7 +449,7 @@ def test_transcripts_are_not_in_main_database(
 ) -> None:
     alice, bob = add_users(manager, 2)
     manager.add_rating(
-        alice, bob, 5.0, RUN, raw_output="SECRET_RAW", input_snapshot="SECRET_SNAPSHOT"
+        alice, bob, 0.5, RUN, raw_output="SECRET_RAW", input_snapshot="SECRET_SNAPSHOT"
     )
     for path in main_db.parent.glob("main.db*"):
         assert b"SECRET" not in path.read_bytes()
@@ -458,11 +458,11 @@ def test_transcripts_are_not_in_main_database(
 
 def test_different_run_stores_a_second_row(manager: ProfileManager) -> None:
     alice, bob = add_users(manager, 2)
-    manager.add_rating(alice, bob, 3.0, "run-1")
-    manager.add_rating(alice, bob, 5.0, "run-2")
-    assert [r.score for r in manager.ratings_by_rater(alice, "run-1")] == [3.0]
-    assert [r.score for r in manager.ratings_by_rater(alice, "run-2")] == [5.0]
-    assert [r.score for r in manager.ratings_of_target(bob, "run-2")] == [5.0]
+    manager.add_rating(alice, bob, 0.3, "run-1")
+    manager.add_rating(alice, bob, 0.5, "run-2")
+    assert [r.score for r in manager.ratings_by_rater(alice, "run-1")] == [0.3]
+    assert [r.score for r in manager.ratings_by_rater(alice, "run-2")] == [0.5]
+    assert [r.score for r in manager.ratings_of_target(bob, "run-2")] == [0.5]
     assert manager.ratings_of_target(bob, "run-3") == []
     assert manager.count_ratings() == 2
     assert manager.count_ratings("run-1") == 1
@@ -470,9 +470,9 @@ def test_different_run_stores_a_second_row(manager: ProfileManager) -> None:
 
 def test_already_rated_pairs(manager: ProfileManager) -> None:
     alice, bob, carol = add_users(manager, 3)
-    manager.add_rating(alice, bob, 5.0, "run-1")
-    manager.add_rating(bob, alice, 5.0, "run-1")
-    manager.add_rating(alice, carol, 5.0, "run-2")
+    manager.add_rating(alice, bob, 0.5, "run-1")
+    manager.add_rating(bob, alice, 0.5, "run-1")
+    manager.add_rating(alice, carol, 0.5, "run-2")
     assert manager.already_rated_pairs("run-1") == {(alice, bob), (bob, alice)}
     assert manager.already_rated_pairs("run-2") == {(alice, carol)}
     assert manager.already_rated_pairs("run-3") == set()
@@ -481,9 +481,9 @@ def test_already_rated_pairs(manager: ProfileManager) -> None:
 @pytest.mark.parametrize(
     "rater, target, score",
     [
-        ("a", "b", 10.5),  # Score out of range.
-        ("a", "a", 5.0),  # Self-rating.
-        ("a", "missing", 5.0),  # Foreign key.
+        ("a", "b", 1.05),  # Score out of range.
+        ("a", "a", 0.5),  # Self-rating.
+        ("a", "missing", 0.5),  # Foreign key.
     ],
 )
 def test_database_constraints_reject_bad_rows(
@@ -522,50 +522,50 @@ def test_mutual_pairs_threshold_is_inclusive_and_needs_both(
     manager: ProfileManager,
 ) -> None:
     alice, bob, carol = add_users(manager, 3)
-    manager.add_rating(alice, bob, 7.5, RUN)
-    manager.add_rating(bob, alice, 8.25, RUN)
-    manager.add_rating(alice, carol, 9.0, RUN)
-    manager.add_rating(carol, alice, 6.0, RUN)
-    assert manager.mutual_pairs(7.5) == [expected_pair(alice, bob, 7.5, 8.25, RUN)]
-    assert manager.mutual_pairs(7.6) == []
+    manager.add_rating(alice, bob, 0.75, RUN)
+    manager.add_rating(bob, alice, 0.825, RUN)
+    manager.add_rating(alice, carol, 0.9, RUN)
+    manager.add_rating(carol, alice, 0.6, RUN)
+    assert manager.mutual_pairs(0.75) == [expected_pair(alice, bob, 0.75, 0.825, RUN)]
+    assert manager.mutual_pairs(0.76) == []
 
 
 def test_mutual_pairs_ignore_one_way_ratings(manager: ProfileManager) -> None:
     alice, bob = add_users(manager, 2)
-    manager.add_rating(alice, bob, 10.0, RUN)
-    assert manager.mutual_pairs(1.0) == []
+    manager.add_rating(alice, bob, 1.0, RUN)
+    assert manager.mutual_pairs(0.1) == []
 
 
 def test_mutual_pairs_filter_by_run(manager: ProfileManager) -> None:
     alice, bob, carol = add_users(manager, 3)
-    manager.add_rating(alice, bob, 8.0, "run-1")
-    manager.add_rating(bob, alice, 9.0, "run-1")
-    manager.add_rating(alice, carol, 7.0, "run-2")
-    manager.add_rating(carol, alice, 7.0, "run-2")
-    run_1 = expected_pair(alice, bob, 8.0, 9.0, "run-1")
-    run_2 = expected_pair(alice, carol, 7.0, 7.0, "run-2")
-    assert manager.mutual_pairs(5.0, "run-1") == [run_1]
-    assert manager.mutual_pairs(5.0, "run-2") == [run_2]
-    assert manager.mutual_pairs(5.0) == [run_1, run_2]
+    manager.add_rating(alice, bob, 0.8, "run-1")
+    manager.add_rating(bob, alice, 0.9, "run-1")
+    manager.add_rating(alice, carol, 0.7, "run-2")
+    manager.add_rating(carol, alice, 0.7, "run-2")
+    run_1 = expected_pair(alice, bob, 0.8, 0.9, "run-1")
+    run_2 = expected_pair(alice, carol, 0.7, 0.7, "run-2")
+    assert manager.mutual_pairs(0.5, "run-1") == [run_1]
+    assert manager.mutual_pairs(0.5, "run-2") == [run_2]
+    assert manager.mutual_pairs(0.5) == [run_1, run_2]
 
 
 def test_mutual_pairs_never_combine_scores_across_runs(
     manager: ProfileManager,
 ) -> None:
     alice, bob = add_users(manager, 2)
-    manager.add_rating(alice, bob, 10.0, "run-1")
-    manager.add_rating(bob, alice, 10.0, "run-2")
-    assert manager.mutual_pairs(1.0) == []
+    manager.add_rating(alice, bob, 1.0, "run-1")
+    manager.add_rating(bob, alice, 1.0, "run-2")
+    assert manager.mutual_pairs(0.1) == []
 
 
 def test_mutual_pair_in_two_runs_appears_once_per_run(
     manager: ProfileManager,
 ) -> None:
     alice, bob = add_users(manager, 2)
-    for run_id, score in (("run-1", 6.0), ("run-2", 8.0)):
+    for run_id, score in (("run-1", 0.6), ("run-2", 0.8)):
         manager.add_rating(alice, bob, score, run_id)
         manager.add_rating(bob, alice, score, run_id)
-    assert [pair.run_id for pair in manager.mutual_pairs(5.0)] == ["run-1", "run-2"]
+    assert [pair.run_id for pair in manager.mutual_pairs(0.5)] == ["run-1", "run-2"]
 
 
 # Deleting profiles
@@ -586,9 +586,9 @@ def test_delete_nonexistent_profile_raises(manager: ProfileManager) -> None:
 
 def test_delete_removes_ratings_as_rater_and_target(manager: ProfileManager) -> None:
     alice, bob, carol = add_users(manager, 3)
-    manager.add_rating(alice, bob, 7.0, "run-1")
-    manager.add_rating(bob, alice, 7.0, "run-2")
-    kept = manager.add_rating(bob, carol, 7.0, "run-1")
+    manager.add_rating(alice, bob, 0.7, "run-1")
+    manager.add_rating(bob, alice, 0.7, "run-2")
+    kept = manager.add_rating(bob, carol, 0.7, "run-1")
 
     manager.delete_profile(alice)
 
@@ -614,9 +614,9 @@ def test_delete_removes_transcripts_as_rater_and_target(
     manager: ProfileManager,
 ) -> None:
     alice, bob, carol = add_users(manager, 3)
-    manager.add_rating(alice, bob, 7.0, "run-1", raw_output="a to b")
-    manager.add_rating(bob, alice, 7.0, "run-2", raw_output="b to a")
-    manager.add_rating(bob, carol, 7.0, "run-1", raw_output="b to c")
+    manager.add_rating(alice, bob, 0.7, "run-1", raw_output="a to b")
+    manager.add_rating(bob, alice, 0.7, "run-2", raw_output="b to a")
+    manager.add_rating(bob, carol, 0.7, "run-1", raw_output="b to c")
 
     manager.delete_profile(alice)
 
@@ -774,10 +774,10 @@ def test_concurrent_threads_writing_ratings(manager: ProfileManager) -> None:
     pairs = [(a, b) for a in users for b in users if a != b]
 
     with ThreadPoolExecutor(max_workers=8) as pool:
-        list(pool.map(lambda pair: manager.add_rating(*pair, 5.5, RUN), pairs))
+        list(pool.map(lambda pair: manager.add_rating(*pair, 0.55, RUN), pairs))
 
     assert manager.count_ratings(RUN) == len(pairs)
-    assert len(manager.mutual_pairs(5.5, RUN)) == len(pairs) // 2
+    assert len(manager.mutual_pairs(0.55, RUN)) == len(pairs) // 2
 
 
 def test_concurrent_edits_to_different_fields_are_not_lost(
@@ -837,7 +837,7 @@ def test_concurrent_creation_of_new_databases(tmp_path: Path) -> None:
 
 
 def test_rating_model_defaults() -> None:
-    rating = Rating(rater_id="a", target_id="b", score=5.0, run_id=RUN)
+    rating = Rating(rater_id="a", target_id="b", score=0.5, run_id=RUN)
     assert rating.timestamp.utcoffset() is not None
     assert rating.model_version is None
     assert rating.step is None
@@ -848,8 +848,8 @@ def test_rating_model_defaults() -> None:
 
 def test_step_round_trips_and_orders_a_run(manager: ProfileManager) -> None:
     alice, bob, carol = add_users(manager, 3)
-    second = manager.add_rating(alice, bob, 5.0, RUN, step=2)
-    first = manager.add_rating(alice, carol, 6.0, RUN, step=1)
+    second = manager.add_rating(alice, bob, 0.5, RUN, step=2)
+    first = manager.add_rating(alice, carol, 0.6, RUN, step=1)
     assert manager.ratings_in_run(RUN) == [first, second]
     assert manager.ratings_in_run("other-run") == []
 
@@ -858,7 +858,7 @@ def test_step_round_trips_and_orders_a_run(manager: ProfileManager) -> None:
 def test_invalid_step_rejected(manager: ProfileManager, step: Any) -> None:
     alice, bob = add_users(manager, 2)
     with pytest.raises(ValidationError):
-        manager.add_rating(alice, bob, 5.0, RUN, step=step)
+        manager.add_rating(alice, bob, 0.5, RUN, step=step)
 
 
 # Runs

@@ -1,0 +1,385 @@
+experiment,condition,rater,target_kind,like,input_tokens
+spread,Gaussian,0,,0.57,961
+spread,Gaussian,0,,0.58,963
+spread,Gaussian,0,,0.55,962
+spread,Gaussian,0,,0.56,960
+spread,Gaussian,0,,0.57,962
+spread,Gaussian,0,,0.55,960
+spread,Gaussian,0,,0.54,963
+spread,Gaussian,0,,0.54,959
+spread,Uniform,0,,0.47,963
+spread,Uniform,0,,0.52,962
+spread,Uniform,0,,0.5,962
+spread,Uniform,0,,0.4,964
+spread,Uniform,0,,0.53,962
+spread,Uniform,0,,0.53,961
+spread,Uniform,0,,0.61,961
+spread,Uniform,0,,0.58,962
+spread,Consistent,0,,0.5,963
+spread,Consistent,0,,0.46,964
+spread,Consistent,0,,0.5,959
+spread,Consistent,0,,0.53,962
+spread,Consistent,0,,0.46,960
+spread,Consistent,0,,0.55,960
+spread,Consistent,0,,0.47,963
+spread,Consistent,0,,0.5,962
+spread,Extreme,0,,0.57,939
+spread,Extreme,0,,0.51,939
+spread,Extreme,0,,0.5,939
+spread,Extreme,0,,0.56,939
+spread,Extreme,0,,0.56,939
+spread,Extreme,0,,0.48,939
+spread,Extreme,0,,0.56,939
+spread,Extreme,0,,0.48,939
+spread,Repeats,0,,0.54,962
+spread,Repeats,0,,0.56,962
+spread,Repeats,0,,0.56,962
+spread,Repeats,0,,0.55,962
+spread,Different targets,0,,0.55,966
+spread,Different targets,0,,0.54,992
+spread,Different targets,0,,0.54,975
+spread,Different targets,0,,0.6,969
+spread,Different targets,0,,0.59,964
+spread,Different targets,0,,0.73,991
+spread,Different targets,0,,0.51,979
+spread,Different targets,0,,0.56,967
+blunt,Wants religious,0,Religious target,0.14,628
+blunt,Wants religious,0,Atheist target,0.03,623
+blunt,Wants non-religious,0,Religious target,0.06,628
+blunt,Wants non-religious,0,Atheist target,0.76,623
+spread,Gaussian,1,,0.4,983
+spread,Gaussian,1,,0.41,985
+spread,Gaussian,1,,0.41,984
+spread,Gaussian,1,,0.39,986
+spread,Gaussian,1,,0.38,986
+spread,Gaussian,1,,0.39,987
+spread,Gaussian,1,,0.39,984
+spread,Gaussian,1,,0.38,985
+spread,Uniform,1,,0.35,986
+spread,Uniform,1,,0.36,986
+spread,Uniform,1,,0.35,986
+spread,Uniform,1,,0.36,984
+spread,Uniform,1,,0.37,985
+spread,Uniform,1,,0.34,986
+spread,Uniform,1,,0.38,986
+spread,Uniform,1,,0.44,986
+spread,Consistent,1,,0.34,984
+spread,Consistent,1,,0.35,986
+spread,Consistent,1,,0.37,984
+spread,Consistent,1,,0.38,983
+spread,Consistent,1,,0.37,985
+spread,Consistent,1,,0.35,986
+spread,Consistent,1,,0.36,981
+spread,Consistent,1,,0.36,985
+spread,Extreme,1,,0.43,962
+spread,Extreme,1,,0.38,962
+spread,Extreme,1,,0.38,962
+spread,Extreme,1,,0.36,962
+spread,Extreme,1,,0.4,962
+spread,Extreme,1,,0.3,962
+spread,Extreme,1,,0.35,962
+spread,Extreme,1,,0.33,962
+spread,Repeats,1,,0.43,985
+spread,Repeats,1,,0.42,985
+spread,Repeats,1,,0.44,985
+spread,Repeats,1,,0.41,985
+spread,Different targets,1,,0.4,1005
+spread,Different targets,1,,0.42,983
+spread,Different targets,1,,0.68,991
+spread,Different targets,1,,0.4,986
+spread,Different targets,1,,0.42,1004
+spread,Different targets,1,,0.39,1012
+spread,Different targets,1,,0.67,1004
+spread,Different targets,1,,0.37,997
+blunt,Wants religious,1,Religious target,0.27,653
+blunt,Wants religious,1,Atheist target,0.03,652
+blunt,Wants non-religious,1,Religious target,0.05,653
+blunt,Wants non-religious,1,Atheist target,0.9,652
+spread,Gaussian,2,,0.76,1005
+spread,Gaussian,2,,0.68,1004
+spread,Gaussian,2,,0.72,1006
+spread,Gaussian,2,,0.71,1005
+spread,Gaussian,2,,0.71,1005
+spread,Gaussian,2,,0.66,1005
+spread,Gaussian,2,,0.73,1002
+spread,Gaussian,2,,0.64,1002
+spread,Uniform,2,,0.73,1007
+spread,Uniform,2,,0.64,1004
+spread,Uniform,2,,0.64,1002
+spread,Uniform,2,,0.64,1003
+spread,Uniform,2,,0.61,1007
+spread,Uniform,2,,0.71,1005
+spread,Uniform,2,,0.68,1003
+spread,Uniform,2,,0.77,1006
+spread,Consistent,2,,0.7,1004
+spread,Consistent,2,,0.69,1004
+spread,Consistent,2,,0.66,1006
+spread,Consistent,2,,0.71,1005
+spread,Consistent,2,,0.68,1004
+spread,Consistent,2,,0.67,1007
+spread,Consistent,2,,0.71,1004
+spread,Consistent,2,,0.7,1005
+spread,Extreme,2,,0.73,982
+spread,Extreme,2,,0.68,982
+spread,Extreme,2,,0.69,982
+spread,Extreme,2,,0.68,982
+spread,Extreme,2,,0.59,982
+spread,Extreme,2,,0.66,982
+spread,Extreme,2,,0.65,982
+spread,Extreme,2,,0.7,982
+spread,Repeats,2,,0.7,1006
+spread,Repeats,2,,0.7,1006
+spread,Repeats,2,,0.7,1006
+spread,Repeats,2,,0.71,1006
+spread,Different targets,2,,0.63,991
+spread,Different targets,2,,0.7,1004
+spread,Different targets,2,,0.57,985
+spread,Different targets,2,,0.59,999
+spread,Different targets,2,,0.65,995
+spread,Different targets,2,,0.67,996
+spread,Different targets,2,,0.61,993
+spread,Different targets,2,,0.65,1007
+blunt,Wants religious,2,Religious target,0.67,650
+blunt,Wants religious,2,Atheist target,0.03,654
+blunt,Wants non-religious,2,Religious target,0.05,650
+blunt,Wants non-religious,2,Atheist target,0.9,654
+spread,Gaussian,3,,0.53,969
+spread,Gaussian,3,,0.58,971
+spread,Gaussian,3,,0.56,969
+spread,Gaussian,3,,0.58,969
+spread,Gaussian,3,,0.59,968
+spread,Gaussian,3,,0.61,964
+spread,Gaussian,3,,0.58,970
+spread,Gaussian,3,,0.59,968
+spread,Uniform,3,,0.51,967
+spread,Uniform,3,,0.55,969
+spread,Uniform,3,,0.66,969
+spread,Uniform,3,,0.58,971
+spread,Uniform,3,,0.47,970
+spread,Uniform,3,,0.55,969
+spread,Uniform,3,,0.58,969
+spread,Uniform,3,,0.52,968
+spread,Consistent,3,,0.54,971
+spread,Consistent,3,,0.52,969
+spread,Consistent,3,,0.55,971
+spread,Consistent,3,,0.53,970
+spread,Consistent,3,,0.49,970
+spread,Consistent,3,,0.5,971
+spread,Consistent,3,,0.55,970
+spread,Consistent,3,,0.51,970
+spread,Extreme,3,,0.59,947
+spread,Extreme,3,,0.56,947
+spread,Extreme,3,,0.55,947
+spread,Extreme,3,,0.48,947
+spread,Extreme,3,,0.57,947
+spread,Extreme,3,,0.54,947
+spread,Extreme,3,,0.54,947
+spread,Extreme,3,,0.51,947
+spread,Repeats,3,,0.57,972
+spread,Repeats,3,,0.57,972
+spread,Repeats,3,,0.59,972
+spread,Repeats,3,,0.57,972
+spread,Different targets,3,,0.68,976
+spread,Different targets,3,,0.52,991
+spread,Different targets,3,,0.5,986
+spread,Different targets,3,,0.49,978
+spread,Different targets,3,,0.68,980
+spread,Different targets,3,,0.56,991
+spread,Different targets,3,,0.66,985
+spread,Different targets,3,,0.67,1004
+blunt,Wants religious,3,Religious target,0.31,632
+blunt,Wants religious,3,Atheist target,0.03,635
+blunt,Wants non-religious,3,Religious target,0.06,632
+blunt,Wants non-religious,3,Atheist target,0.74,635
+spread,Gaussian,4,,0.43,1001
+spread,Gaussian,4,,0.49,1001
+spread,Gaussian,4,,0.48,1001
+spread,Gaussian,4,,0.47,1000
+spread,Gaussian,4,,0.43,1000
+spread,Gaussian,4,,0.47,1001
+spread,Gaussian,4,,0.52,998
+spread,Gaussian,4,,0.51,1002
+spread,Uniform,4,,0.48,1000
+spread,Uniform,4,,0.46,1003
+spread,Uniform,4,,0.45,1002
+spread,Uniform,4,,0.48,1002
+spread,Uniform,4,,0.47,1002
+spread,Uniform,4,,0.5,1002
+spread,Uniform,4,,0.48,1001
+spread,Uniform,4,,0.47,1003
+spread,Consistent,4,,0.53,1002
+spread,Consistent,4,,0.52,1000
+spread,Consistent,4,,0.46,1001
+spread,Consistent,4,,0.5,1002
+spread,Consistent,4,,0.49,994
+spread,Consistent,4,,0.51,1001
+spread,Consistent,4,,0.49,999
+spread,Consistent,4,,0.5,1000
+spread,Extreme,4,,0.48,978
+spread,Extreme,4,,0.48,978
+spread,Extreme,4,,0.49,978
+spread,Extreme,4,,0.44,978
+spread,Extreme,4,,0.45,978
+spread,Extreme,4,,0.51,978
+spread,Extreme,4,,0.48,978
+spread,Extreme,4,,0.46,978
+spread,Repeats,4,,0.56,997
+spread,Repeats,4,,0.55,997
+spread,Repeats,4,,0.53,997
+spread,Repeats,4,,0.54,997
+spread,Different targets,4,,0.7,983
+spread,Different targets,4,,0.5,982
+spread,Different targets,4,,0.76,994
+spread,Different targets,4,,0.68,973
+spread,Different targets,4,,0.45,976
+spread,Different targets,4,,0.6,972
+spread,Different targets,4,,0.54,978
+spread,Different targets,4,,0.72,993
+blunt,Wants religious,4,Religious target,0.79,661
+blunt,Wants religious,4,Atheist target,0.03,652
+blunt,Wants non-religious,4,Religious target,0.06,661
+blunt,Wants non-religious,4,Atheist target,0.73,652
+spread,Gaussian,5,,0.48,963
+spread,Gaussian,5,,0.49,960
+spread,Gaussian,5,,0.55,965
+spread,Gaussian,5,,0.52,966
+spread,Gaussian,5,,0.52,965
+spread,Gaussian,5,,0.5,965
+spread,Gaussian,5,,0.56,965
+spread,Gaussian,5,,0.5,965
+spread,Uniform,5,,0.49,964
+spread,Uniform,5,,0.49,962
+spread,Uniform,5,,0.44,966
+spread,Uniform,5,,0.48,964
+spread,Uniform,5,,0.45,960
+spread,Uniform,5,,0.46,965
+spread,Uniform,5,,0.57,966
+spread,Uniform,5,,0.49,966
+spread,Consistent,5,,0.48,964
+spread,Consistent,5,,0.47,962
+spread,Consistent,5,,0.48,965
+spread,Consistent,5,,0.54,963
+spread,Consistent,5,,0.5,963
+spread,Consistent,5,,0.52,965
+spread,Consistent,5,,0.46,967
+spread,Consistent,5,,0.55,965
+spread,Extreme,5,,0.44,942
+spread,Extreme,5,,0.5,942
+spread,Extreme,5,,0.47,942
+spread,Extreme,5,,0.43,942
+spread,Extreme,5,,0.52,942
+spread,Extreme,5,,0.43,942
+spread,Extreme,5,,0.45,942
+spread,Extreme,5,,0.52,942
+spread,Repeats,5,,0.51,962
+spread,Repeats,5,,0.5,962
+spread,Repeats,5,,0.53,962
+spread,Repeats,5,,0.51,962
+spread,Different targets,5,,0.67,966
+spread,Different targets,5,,0.75,980
+spread,Different targets,5,,0.69,989
+spread,Different targets,5,,0.57,993
+spread,Different targets,5,,0.55,972
+spread,Different targets,5,,0.71,974
+spread,Different targets,5,,0.74,972
+spread,Different targets,5,,0.55,983
+blunt,Wants religious,5,Religious target,0.42,660
+blunt,Wants religious,5,Atheist target,0.03,631
+blunt,Wants non-religious,5,Religious target,0.06,660
+blunt,Wants non-religious,5,Atheist target,0.82,631
+spread,Gaussian,6,,0.77,987
+spread,Gaussian,6,,0.76,985
+spread,Gaussian,6,,0.76,987
+spread,Gaussian,6,,0.78,986
+spread,Gaussian,6,,0.79,985
+spread,Gaussian,6,,0.77,987
+spread,Gaussian,6,,0.73,983
+spread,Gaussian,6,,0.76,987
+spread,Uniform,6,,0.72,987
+spread,Uniform,6,,0.73,984
+spread,Uniform,6,,0.74,988
+spread,Uniform,6,,0.77,986
+spread,Uniform,6,,0.67,986
+spread,Uniform,6,,0.75,986
+spread,Uniform,6,,0.76,987
+spread,Uniform,6,,0.77,982
+spread,Consistent,6,,0.74,982
+spread,Consistent,6,,0.72,982
+spread,Consistent,6,,0.78,986
+spread,Consistent,6,,0.77,986
+spread,Consistent,6,,0.79,987
+spread,Consistent,6,,0.75,988
+spread,Consistent,6,,0.76,985
+spread,Consistent,6,,0.77,986
+spread,Extreme,6,,0.78,963
+spread,Extreme,6,,0.69,963
+spread,Extreme,6,,0.7,963
+spread,Extreme,6,,0.68,963
+spread,Extreme,6,,0.71,963
+spread,Extreme,6,,0.75,963
+spread,Extreme,6,,0.74,963
+spread,Extreme,6,,0.77,963
+spread,Repeats,6,,0.74,986
+spread,Repeats,6,,0.75,986
+spread,Repeats,6,,0.76,986
+spread,Repeats,6,,0.75,986
+spread,Different targets,6,,0.58,974
+spread,Different targets,6,,0.71,971
+spread,Different targets,6,,0.62,993
+spread,Different targets,6,,0.55,961
+spread,Different targets,6,,0.7,994
+spread,Different targets,6,,0.71,974
+spread,Different targets,6,,0.64,959
+spread,Different targets,6,,0.73,972
+blunt,Wants religious,6,Religious target,0.33,627
+blunt,Wants religious,6,Atheist target,0.03,633
+blunt,Wants non-religious,6,Religious target,0.07,627
+blunt,Wants non-religious,6,Atheist target,0.9,633
+spread,Gaussian,7,,0.65,988
+spread,Gaussian,7,,0.66,988
+spread,Gaussian,7,,0.55,987
+spread,Gaussian,7,,0.62,984
+spread,Gaussian,7,,0.69,987
+spread,Gaussian,7,,0.64,986
+spread,Gaussian,7,,0.59,984
+spread,Gaussian,7,,0.68,986
+spread,Uniform,7,,0.64,986
+spread,Uniform,7,,0.6,984
+spread,Uniform,7,,0.57,988
+spread,Uniform,7,,0.57,986
+spread,Uniform,7,,0.51,986
+spread,Uniform,7,,0.64,986
+spread,Uniform,7,,0.63,986
+spread,Uniform,7,,0.62,984
+spread,Consistent,7,,0.62,985
+spread,Consistent,7,,0.61,987
+spread,Consistent,7,,0.64,986
+spread,Consistent,7,,0.69,986
+spread,Consistent,7,,0.63,988
+spread,Consistent,7,,0.62,985
+spread,Consistent,7,,0.64,988
+spread,Consistent,7,,0.63,986
+spread,Extreme,7,,0.61,963
+spread,Extreme,7,,0.63,963
+spread,Extreme,7,,0.64,963
+spread,Extreme,7,,0.7,963
+spread,Extreme,7,,0.63,963
+spread,Extreme,7,,0.66,963
+spread,Extreme,7,,0.6,963
+spread,Extreme,7,,0.7,963
+spread,Repeats,7,,0.59,985
+spread,Repeats,7,,0.59,985
+spread,Repeats,7,,0.61,985
+spread,Repeats,7,,0.59,985
+spread,Different targets,7,,0.59,993
+spread,Different targets,7,,0.47,971
+spread,Different targets,7,,0.63,976
+spread,Different targets,7,,0.59,972
+spread,Different targets,7,,0.56,984
+spread,Different targets,7,,0.53,973
+spread,Different targets,7,,0.61,983
+spread,Different targets,7,,0.55,983
+blunt,Wants religious,7,Religious target,0.72,639
+blunt,Wants religious,7,Atheist target,0.03,623
+blunt,Wants non-religious,7,Religious target,0.07,639
+blunt,Wants non-religious,7,Atheist target,0.9,623

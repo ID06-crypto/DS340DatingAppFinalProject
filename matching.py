@@ -10,8 +10,19 @@ from models import Profile, PublicProfile, Rating
 from store import Store
 
 
+_GENDER_OF_INTEREST = {"men": "man", "women": "woman"}
+
+
 def _to_public(profile: Profile) -> PublicProfile:
     return PublicProfile.model_validate(profile.model_dump(exclude={"agent"}))
+
+
+def is_compatible(user: PublicProfile, other: PublicProfile) -> bool:
+    """Whether each of the two is the gender the other is interested in."""
+    return (
+        _GENDER_OF_INTEREST[user.interested_in] == other.gender
+        and _GENDER_OF_INTEREST[other.interested_in] == user.gender
+    )
 
 
 class PublicView:
@@ -77,4 +88,37 @@ class RandomMatcher(Matcher):
         seen = view.already_rated(user_id) | {user_id}
         # Sorted so that the choice doesn't depend on the order profiles were stored.
         candidates = sorted(p.user_id for p in view.list_profiles() if p.user_id not in seen)
+        return self._rng.choice(candidates) if candidates else None
+
+
+class CompatibleRandomMatcher(Matcher):
+    """Picks uniformly among compatible profiles this user hasn't rated in this run.
+
+    This is the baseline a real matcher has to beat. Filtering by gender and interest
+    is easy, so a matcher shouldn't get credit just for doing that.
+
+    Profiles are read once and kept, which is much faster on long runs. Use a new matcher
+    for each run, and don't edit profiles during one.
+    """
+
+    name = "compatible-random"
+
+    def __init__(self, rng: random.Random) -> None:
+        self._rng = rng
+        self._profiles: list[PublicProfile] | None = None
+        self._compatible: dict[str, list[str]] = {}
+
+    def _compatible_with(self, user_id: str, view: PublicView) -> list[str]:
+        if user_id not in self._compatible:
+            if self._profiles is None:
+                self._profiles = view.list_profiles()
+            user = next(p for p in self._profiles if p.user_id == user_id)
+            self._compatible[user_id] = sorted(
+                p.user_id for p in self._profiles if p.user_id != user_id and is_compatible(user, p)
+            )
+        return self._compatible[user_id]
+
+    def next_profile(self, user_id: str, view: PublicView) -> str | None:
+        seen = view.already_rated(user_id)
+        candidates = [c for c in self._compatible_with(user_id, view) if c not in seen]
         return self._rng.choice(candidates) if candidates else None

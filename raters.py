@@ -5,6 +5,7 @@ own profile and persona, plus the target's public profile. It never sees the
 target's persona, and nothing carries over between calls.
 """
 
+import functools
 import json
 import math
 import random
@@ -12,24 +13,14 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from typesafe_sdk import Noul, RetryPolicy, TypeSafeClient
 
 from models import Persona, Profile
-
-SCORE_SCALE = {
-    "min": 1,
-    "max": 10,
-    "anchors": {
-        "1": "no interest",
-        "5": "neutral",
-        "10": "would message immediately",
-    },
-}
-
 
 class RatingResult(BaseModel):
     """A rater's answer.
 
-    The score should be from 1.0 to 10.0, but only needs to be a finite number here.
+    The score is the probability the rater likes the target. It should be from 0.0 to 1.0, but only needs to be a finite number here.
     A real model can answer out of range, and the simulation clamps that when saving.
     """
 
@@ -61,7 +52,6 @@ def build_rater_input(
         "rater_profile": rater_profile.model_dump(exclude={"agent"}),
         "rater_persona": rater_persona.description,
         "target_profile": target_profile.model_dump(exclude={"agent"}),
-        "scale": SCORE_SCALE,
     }
 
 
@@ -85,7 +75,7 @@ class FakeRater(Rater):
         self, rater_profile: Profile, rater_persona: Persona, target_profile: Profile
     ) -> RatingResult:
         rater_input = build_rater_input(rater_profile, rater_persona, target_profile)
-        score = round(self._rng.uniform(1.0, 10.0), 2)
+        score = round(self._rng.uniform(0.0, 1.0), 2)
         return RatingResult(
             score=score,
             raw_output=json.dumps({"score": score}),
@@ -94,15 +84,63 @@ class FakeRater(Rater):
         )
 
 
+# Pinned rather than "jev-latest", so a new release can't change scores partway through
+# an experiment. It's saved with every rating.
+JEV_MODEL = "jev-1.14.0"
+JEV_PRICE_PER_MTOK = 0.042  # In US dollars, charged on input tokens only.
+JEV_QUESTION_ID = "like"
+JEV_QUESTION = Noul(
+    instructions=(
+        "`rater` is a college student using a dating app, and `rater_persona` says what "
+        "they're like and what they want in a partner. Judging as this person would, and "
+        "following the preferences in `rater_persona`, would `rater` like `shown_profile`? "
+        "`rater.interested_in` says who they're attracted to, so anyone outside it is a no."
+    ),
+)
+
+
+@functools.cache
+def _jev_client() -> TypeSafeClient:
+    """Create one client when it's first needed. It reads TYPESAFE_API_KEY."""
+    return TypeSafeClient(model=JEV_MODEL, retry=RetryPolicy(max_retries=5, backoff_max=30.0))
+
+
+def build_jev_state(rater_input: dict[str, Any]) -> dict[str, Any]:
+    """Arrange the rater input for Jev. user_ids are left out because they mean nothing to it."""
+
+    def without_id(profile: dict[str, Any]) -> dict[str, Any]:
+        return {key: value for key, value in profile.items() if key != "user_id"}
+
+    return {
+        "rater": without_id(rater_input["rater_profile"]),
+        "rater_persona": rater_input["rater_persona"],
+        "shown_profile": without_id(rater_input["target_profile"]),
+    }
+
+
 def _call_jev(rater_input: dict[str, Any]) -> tuple[float, str]:
-    """STUB: the only place the Jev API will be called. Returns (score, raw_output)."""
-    raise NotImplementedError("The Jev API integration is pending.")
+    """The only place the Jev API is called. Returns (score, raw_output).
+
+    The score is Jev's probability that the rater likes the target. The SDK retries rate
+    limits, timeouts, and server errors itself.
+    """
+    response = _jev_client().system_one(
+        state=build_jev_state(rater_input),
+        questions={JEV_QUESTION_ID: JEV_QUESTION},
+    )
+    score = response.answers[JEV_QUESTION_ID].noul
+    raw_output = json.dumps({
+        "model": response.model,
+        "noul": score,
+        "input_tokens": response.usage.input_tokens,
+    })
+    return score, raw_output
 
 
 class JevRater(Rater):
-    """STUB: rates through Jev once _call_jev is implemented."""
+    """Rates through Jev. Needs the TYPESAFE_API_KEY environment variable."""
 
-    MODEL_VERSION = "jev-pending"
+    MODEL_VERSION = JEV_MODEL
 
     def rate(
         self, rater_profile: Profile, rater_persona: Persona, target_profile: Profile

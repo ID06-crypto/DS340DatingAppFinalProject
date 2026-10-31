@@ -11,3 +11,10 @@ __pycache__/
 # Exports
 profiles.json
 personas.json
+
+# Sample personas from the notebook, which are hidden data
+notebooks/written_personas_sample.json
+
+# Backups and run logs
+backups/
+data/*.log

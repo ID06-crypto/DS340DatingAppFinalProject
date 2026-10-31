@@ -1,0 +1,361 @@
+SYNTHETIC DATA REPORT
+Reciprocal matching project (DS340)
+Written 2026-10-31
+
+This report records how the synthetic users were made, what was tested along the
+way, what changed as a result, and where the final dataset stands.
+
+
+1. SUMMARY
+----------
+The final dataset is 2,000 simulated Boston University students. Each has a public
+profile and a hidden written persona. A persona is 2 to 3 sentences written by Claude
+Haiku 5.5 from the user's profile and five random personality traits, and it describes
+what the person is like and what they want in a partner.
+
+Simulated users rate profiles through TypeSafe's Jev model. Jev answers one yes/no
+question, "would this person like this profile?", and returns a probability from 0 to
+1. That probability is the saved rating.
+
+Written personas replaced the original trait-score personas because Jev barely
+responded to trait scores. In the final test, with each user rating as themselves:
+
+    Measure                          Trait numbers    Written personas
+    Rater x target interaction       0.115            0.191
+    Noise (repeating a rating)       0.011            0.014
+    Mean like probability            0.585            0.307
+
+The rater x target interaction measures whether different people like different
+targets. That is the hidden taste a matching algorithm has to learn.
+
+Main caution: all of this is Jev's estimate of how invented people would react. It
+is not measured human behavior. See section 7.
+
+
+2. THE ORIGINAL DATASET (10,000 USERS)
+--------------------------------------
+Profiles (scripts/generate_profiles.py, Data Generation/synthetic_data.py, seed 42).
+Each value is drawn uniformly unless noted.
+
+    gender          man or woman, 50/50 (5,027 men and 4,973 women)
+    name            80 names per gender
+    age             18 to 24
+    height_cm       150 to 200, for all genders
+    religion        10 options
+    school          always BU
+    major           42 options
+    job             8 student jobs
+    interests       1 to 3 from 383 unique hobbies (hobbylist.csv)
+    clubs           0 to 3 of 432 BU organizations, leaving out clubs limited to
+                    the other gender
+    interested_in   own gender 3% of the time, otherwise the other gender
+                    (296 users, or 2.96%, were interested in their own gender)
+    looking_for     short-term, long-term, or just a date
+    agent           always True
+
+Fields are drawn independently, apart from name, clubs, and interested_in depending
+on gender.
+
+Personas, version 1 (Data Generation/synthetic_personas.py, now superseded). Each user
+got 25 trait scores in 6 categories, drawn from a normal distribution with mean 0.5 and
+SD 0.2, rounded to two decimals. Out-of-range draws were redrawn. Regenerating the data
+in memory reproduced every profile and persona exactly.
+
+Storage: profiles in main.db, personas in a separate personas.db, so that the matching
+algorithm has no route to hidden data.
+
+
+3. WHAT WE TESTED AND WHAT WE CHANGED
+-------------------------------------
+Sample sizes in these tests are small. They were chosen to guide decisions cheaply, so
+treat the numbers as rough sizes. The Jev question was also reworded between tests 3
+and 4, and again before test 5, so compare across tests loosely.
+
+Test 1: 10-level score, trait-score personas (100 ratings)
+    Jev rated profiles on a 1 to 10 scale using a Score question.
+    Result: scores ran 3.38 to 7.49, mean 5.92, SD 1.03. Incompatible profiles scored
+    1.39 in one check, and there were no failures.
+    Problem: for one rater, changing the persona moved scores by SD 0.15, while
+    changing the target moved them by SD 1.04.
+    Also seen: Jev under-used the "Neutral" level (mean probability 0.065, below both
+    neighbors).
+
+Idea considered: z-score each label across ratings
+    This was proposed to remove label bias. It wasn't used, since rare levels turned
+    into noise (z-scores reached 5.7) and the results no longer summed to 1. The switch
+    to a single label in test 2 removed the problem.
+
+Test 2: one "like" label against the 10-level score (same 100 pairs)
+    Jev's Noul question returns the probability of a yes.
+    Result: correlation of 0.96 with the 10-level score. Range 0.34 to 0.76, with 81%
+    of ratings between 0.3 and 0.7. An incompatible profile scored 0.05. Tokens per
+    rating fell from 1,114 to 986.
+    Decision: switched to the single label. Real people will like or pass rather than
+    give a 1 to 10 score, so training labels match test labels, and a pair's chance of
+    matching is the product of their two probabilities.
+    Persona effect was still barely above noise (SD about 0.026 against 0.015).
+
+Test 3: are personas the problem? (notebooks/persona_test.ipynb, 384 ratings)
+    Hypotheses tested: Jev itself is the limit, Gaussian traits have too little
+    variation, or personas need to fit their profiles. 8 raters, one target each.
+
+        Condition                               SD of like probability
+        Repeating the same request (noise)      0.010
+        Gaussian traits                         0.027
+        Uniform traits                          0.043
+        Traits consistent with the profile      0.024
+        Extreme traits (all 0 or 1)             0.037
+        Different target, same persona          0.080
+
+    Opposite written preferences about religion moved scores far more:
+
+        Written preference                 Religious target    Atheist target
+        Only wants someone very religious  0.46                0.03
+        Only wants someone not religious   0.06                0.83
+
+    Conclusions: Jev can use persona information, so Jev alone isn't the limit. Uniform
+    helped modestly. More numeric variation doesn't close the gap, since extreme traits
+    did no better than uniform. Consistency with the profile showed no gain. The weak
+    link was the trait-number format.
+
+Test 4: Claude-written personas (notebooks/written_personas.ipynb, 792 ratings)
+    50 personas were written from five uniform traits, without seeing a profile. 4
+    raters, each rating 10 personas against 6 targets in every condition.
+
+        Measure                     Gaussian    Uniform    Written
+        SD across personas          0.034       0.044      0.166
+        Persona x target            0.011       0.015      0.144
+        Noise                       0.010       0.010      0.015
+        Ratings at 0.3 or below     5%          6%         40%
+        Ratings at 0.7 or above     25%         18%        17%
+
+    Sense check on 3 raters: high-traditionalism personas favored religious targets by
+    0.15, and low-traditionalism personas favored non-religious ones by 0.09.
+    Decision: use written personas, and show Claude the profile so that a persona can't
+    conflict with it.
+
+Test 5: pilot of 50 personas written with the profile (264 ratings)
+    Same persona-swap design as test 4: SD across personas 0.176, persona x target
+    0.149, target 0.080, noise 0.016. The signal held, so the full set was generated.
+
+Test 6: final check (notebooks/final_dataset_check.ipynb, 1,080 ratings)
+    See section 5.
+
+
+4. THE FINAL DATASET (2,000 USERS)
+----------------------------------
+Generator: Data Generation/written_personas.py.
+
+Users: a seeded random sample (seed 42) of the original 10,000 profiles, unchanged and
+with the same IDs. A smaller pool means more pairs rate each other for the same number
+of ratings.
+
+    Men interested in women      989
+    Women interested in men      961
+    Men interested in men         29
+    Women interested in women     21
+
+    Looking for: 711 short-term, 680 just a date, 609 long-term
+
+Traits: five traits drawn uniformly from 0 to 1 for each user, from the seed and user
+ID: extraversion, openness, conscientiousness, traditionalism, achievement drive.
+
+Writing: Claude Haiku 5.5 received the profile (without name, ID, or agent flag) and the
+traits. It was asked for 2 to 3 sentences in the third person covering what the person
+is like and what they want and don't want in a partner, using only things a dating
+profile shows.
+
+Result:
+    2,000 personas written with 0 failures
+    385 to 950 characters, mean 590
+    2 sentences: 919, 3 sentences: 1,076, 4 sentences: 5
+    No duplicates. Mean word overlap between two personas is 0.22.
+
+Storage:
+    data/main.db        Profiles, ratings, and runs. Public to the matcher.
+    data/personas.db    Personas and rating transcripts. Hidden from the matcher.
+
+generation_seeds on each persona records the seed, model, and five traits.
+paths.py is the one place that says where the current dataset lives.
+
+The original 10,000-user main.db and personas.db were left in place in the project root.
+
+Rating: raters.py sends the rater's profile, written persona, and the target's profile
+to jev-1.14.0. The version is pinned so that a new release can't change scores partway
+through an experiment. User IDs and the agent flag are never sent. The question is:
+
+    `rater` is a college student using a dating app, and `rater_persona` says what
+    they're like and what they want in a partner. Judging as this person would, and
+    following the preferences in `rater_persona`, would `rater` like `shown_profile`?
+    `rater.interested_in` says who they're attracted to, so anyone outside it is a no.
+
+
+5. FINAL RESULTS
+----------------
+Data checks on all 2,000 users:
+    Users without a persona                 0
+    Personas without a user                 0
+    Duplicate personas                      0
+    Profiles changed from the original      0
+    Users marked as agents                  2,000
+    Sampled persona text in main.db         0 (25 personas checked against profiles)
+
+Jev test: 20 men and 20 women each rated 12 targets with their own profile, once with
+their written persona and once with their original trait numbers.
+
+    Measure                          Trait numbers    Written personas
+    Rater x target interaction       0.115            0.191
+    Rater effect                     0.060            0.110
+    Target effect                    0.033            0.071
+    Noise                            0.011            0.014
+    Mean like probability            0.585            0.307
+    SD of like probability           0.132            0.220
+    Ratings at 0.3 or below          5%               60%
+    Ratings at 0.7 or above          27%              8%
+
+The interaction is about 14 times noise. Trait numbers already reached 0.115 here,
+because raters' own profiles differ and Jev reads them. So written personas add about
+1.7 times on top of that. The near 4-fold gain in test 4 only applies when the persona
+alone changes.
+
+Do the preferences make sense? Mean like probability with written personas:
+    Same relationship goal    0.451 against 0.239 (difference 0.21)
+    Same religion             0.405 against 0.297 (difference 0.11)
+
+    Traditionalism    Religious target    Non-religious target    Difference
+    Low               0.325               0.418                   -0.09
+    Middle            0.305               0.372                   -0.07
+    High              0.270               0.229                   +0.04
+
+The match differences could partly come from Jev reading both profiles. The
+traditionalism gap moves the expected way but is weak, and weaker than in test 4.
+
+End-to-end run: a real 100-step simulation through the framework, using
+CompatibleRandomMatcher and Jev, saved as jev-trial-final in data/main.db.
+    0 failures, mean 0.33, SD 0.22, range 0.03 to 0.80, all between compatible users
+    0.14 seconds per step, 753 tokens per rating
+
+The full 100,000-rating run is reported in section 6.
+
+Cost:
+    Writing the 2,000 personas     $0.27
+    All tests and trials           about $0.15
+    100,000-rating baseline        $3.16
+
+
+6. THE 100,000-RATING RANDOM BASELINE
+-------------------------------------
+Run ID: random-baseline-100k. CompatibleRandomMatcher showed each user random compatible
+profiles, and Jev rated them using each user's written persona. This is the baseline a
+real matching algorithm has to beat. Details and charts are in
+notebooks/random_baseline_metrics.ipynb.
+
+The run:
+    Steps attempted               100,000
+    Ratings saved                 99,999
+    Failed steps                  1 (a brief server error from Jev, at step 26,802)
+    Pairs rated twice             0
+    Ratings with a transcript     99,999
+    Ratings per user              Median 50 given and 50 received
+    Cost                          $3.16 (752 input tokens per rating)
+
+    The first 1,646 ratings ran one at a time. The run was then stopped and resumed
+    with 8 parallel workers, which raised speed from about 7 to about 44 ratings a
+    second. The matcher doesn't learn, so this shouldn't affect the results.
+
+    All 50 same-gender users rated everyone compatible and dropped out of the pool.
+
+Results:
+    Mean like probability                  0.324 (95% interval 0.318 to 0.330)
+    SD of like probability                 0.232
+    Ratings at 0.3 or below                56%
+    Ratings at 0.5 or above                27%
+    Ratings at 0.7 or above                9%
+    Pairs who rated each other             3,104 (6% of ratings are in such a pair)
+    Expected matches                       414, or 4.14 per 1,000 ratings
+    Match chance per pair                  0.133 (95% interval 0.128 to 0.139)
+    Pairs with both at 0.5 or above        415
+    Pairs with both at 0.7 or above        62
+    Correlation of scores within a pair    0.47
+    Learning curve per 5,000 ratings       Flat, 0.314 to 0.330
+
+Expected matches is the main number to compare against. A pair's match chance is the
+product of their two scores, which assumes each decision is independent once the
+probabilities are known. One seeded draw of simulated swipes gave 427 matches.
+
+What drives ratings (simple averages, not causal effects):
+    Same relationship goal: 0.455 against 0.258 (difference 0.20)
+    Same religion:          0.412 against 0.315 (difference 0.10)
+    Spread across raters:   SD 0.14
+    Spread across targets:  SD 0.07
+
+    Mean like probability, by rater's goal (rows) and target's goal (columns):
+                     short-term    long-term    just a date
+    short-term       0.446         0.163        0.453
+    long-term        0.091         0.422        0.114
+    just a date      0.422         0.261        0.492
+
+Where it's saved:
+    data/main.db                               Every rating
+    data/personas.db                           What Jev was sent and answered, per rating
+    exports/random-baseline-100k_ratings.csv.gz  Every rating, without persona text
+    exports/random-baseline-100k_metrics.json    The numbers above
+    notebooks/figures/random_baseline_*.png      The charts
+    backups/2026-10-31_181510/                 Full copy of both databases after the run
+
+
+7. HOW TO REGENERATE
+--------------------
+Requires the TYPESAFE_API_KEY and ANTHROPIC_API_KEY environment variables.
+
+    python scripts/generate_profiles.py                 Original 10,000 profiles
+    python "Data Generation/synthetic_personas.py"      Original trait personas
+    python "Data Generation/written_personas.py"        The final 2,000 users
+    python scripts/run_experiment.py --run-id NEW_NAME --steps 100000
+
+The profiles, the sample of users, and the traits repeat exactly for the same seeds.
+Claude's wording does NOT repeat, so regenerating gives different personas.
+
+The ratings won't repeat exactly either, because Jev's answers vary slightly and each
+rerun costs money. If a run stops, the same command continues it from its last saved rating.
+
+Databases and backups are excluded from Git by .gitignore, so they exist only on this
+computer unless copied elsewhere. Copy them, because the exact personas can't be recreated
+from the code. The ratings export has no persona text and can be committed.
+
+
+8. LIMITATIONS
+--------------
+- Simulated behavior: ratings are Jev's estimates about invented people. They haven't
+  been compared with real people's choices.
+- Low like rates: written personas are picky, with a mean like probability of 0.31 and
+  60% of ratings at 0.3 or below. Mutual matches will be rare.
+- Unrealistic profiles: most fields are independent and uniform. Each religion is about
+  10% of users, height doesn't vary by gender, and majors don't affect jobs or clubs.
+  They don't reflect BU's actual students.
+- Same-gender pool: only 50 of the 2,000 users are interested in their own gender, so
+  results for them will be thin.
+- One gender of interest: interested_in holds one value, so nobody is interested in both
+  men and women.
+- Small tests: the final test used 40 raters and 24 targets, across two groups.
+- Uneven final comparison: the Jev question no longer explains the trait-number scale,
+  which may slightly weaken the trait-number result.
+- Writing quality: 344 personas (17%) use gendered words despite being told not to. An
+  automated check flagged 7 possible conflicts with interested_in, and on reading them
+  none was real (they were club names or self-descriptions). The check only looks at
+  specific words, so it can't rule out every conflict. About 30 personas use trait words
+  like "openness", and some name very specific clubs that few profiles could match.
+- Persona and profile overlap: personas now reflect profiles, so a matcher can partly
+  infer tastes from public data. This is realistic, but it means persona and profile
+  effects can't be cleanly separated.
+- Not repeatable word for word: repeated Jev ratings vary by about 0.01 to 0.02, so seeds
+  repeat who sees whom but not exact scores.
+
+
+9. WHAT IS STILL OPEN
+---------------------
+- The real matching algorithm hasn't been built. CompatibleRandomMatcher is the
+  baseline it has to beat, at 4.14 expected matches per 1,000 ratings.
+- A matcher that learns from each rating should run one at a time or in small batches,
+  so comparing it with this baseline may take much longer than this run did.
+- No real people are in the data yet. The test set needs its own separate database.

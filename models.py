@@ -105,7 +105,7 @@ class Rating(BaseModel):
 
     rater_id: NonEmptyStr
     target_id: NonEmptyStr
-    score: float = Field(ge=1.0, le=10.0, strict=True, allow_inf_nan=False)
+    score: float = Field(ge=0.0, le=1.0, strict=True, allow_inf_nan=False)  # P(rater likes target).
     run_id: NonEmptyStr
     timestamp: UtcDatetime = Field(default_factory=_utc_now)
     model_version: str | None = None

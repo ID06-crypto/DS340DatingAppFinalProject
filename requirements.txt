@@ -1,2 +1,7 @@
 pydantic>=2,<3
 pytest
+typesafe-sdk>=0.7,<1
+matplotlib
+pandas
+ipykernel
+anthropic>=2,<3

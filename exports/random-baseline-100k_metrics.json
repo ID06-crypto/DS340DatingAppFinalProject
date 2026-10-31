@@ -1,0 +1,72 @@
+{
+  "run_id": "random-baseline-100k",
+  "matcher": "compatible-random",
+  "health": {
+    "Steps attempted": 100000,
+    "Ratings saved": 99999,
+    "Failed steps": 1,
+    "Pairs rated twice": 0,
+    "Ratings without a transcript": 0,
+    "Raters": 2000,
+    "Targets": 2000,
+    "Models used": "jev-1.14.0",
+    "Input tokens per rating": 752,
+    "Jev cost (USD)": 3.16,
+    "Hours from first start to finish, including the pause": 0.77,
+    "Ratings given per user (min, median, max)": "20, 50, 77",
+    "Ratings received per user (min, median, max)": "20, 50, 75"
+  },
+  "likes": {
+    "Mean like probability": 0.3241768417684177,
+    "SD": 0.23220846363281708,
+    "Median": 0.25,
+    "Share at 0.3 or below": 0.5570255702557025,
+    "Share at 0.5 or above": 0.27104271042710426,
+    "Share at 0.7 or above": 0.0889408894088941
+  },
+  "mean_like_95_interval": [
+    0.31823155163232997,
+    0.32998762600021253
+  ],
+  "matches": {
+    "Ratings": 99999,
+    "Pairs who rated each other": 3104,
+    "Share of ratings in such a pair": 0.06208062080620806,
+    "Expected matches": 413.97860000000003,
+    "Expected matches per 1,000 ratings": 4.139827398273983,
+    "Match chance per pair (mean)": 0.13336939432989692,
+    "Match chance if the two scores were unrelated": 0.1081186971707607,
+    "Correlation between the two scores in a pair": 0.46664874660256045,
+    "Pairs with both at 0.5 or above": 415,
+    "Pairs with both at 0.7 or above": 62,
+    "One seeded draw of simulated swipes: matches": 427
+  },
+  "match_chance_95_interval": [
+    0.12785895940721653,
+    0.13871556781572164
+  ],
+  "same_goal_difference": 0.1969293351676072,
+  "same_religion_difference": 0.09717547134987714,
+  "learning_curve_every_5000": [
+    0.32221,
+    0.330196,
+    0.323824,
+    0.327306,
+    0.326024,
+    0.323826,
+    0.314446,
+    0.321498,
+    0.32225,
+    0.324724,
+    0.324732,
+    0.325182,
+    0.324326,
+    0.323246,
+    0.324492,
+    0.32797200000000004,
+    0.32334,
+    0.323308,
+    0.32550000000000007,
+    0.3251350270054011
+  ]
+}

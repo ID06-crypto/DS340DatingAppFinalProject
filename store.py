@@ -36,7 +36,7 @@ SCHEMA = (
     CREATE TABLE IF NOT EXISTS ratings (
         rater_id       TEXT NOT NULL REFERENCES profiles (user_id) ON DELETE CASCADE,
         target_id      TEXT NOT NULL REFERENCES profiles (user_id) ON DELETE CASCADE,
-        score          REAL NOT NULL CHECK (score BETWEEN 1.0 AND 10.0),
+        score          REAL NOT NULL CHECK (score BETWEEN 0.0 AND 1.0),
         run_id         TEXT NOT NULL,
         timestamp      TEXT NOT NULL,
         model_version  TEXT,
