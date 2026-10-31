@@ -33,6 +33,7 @@ def profile_data(name: str = "Sam") -> dict[str, Any]:
         "job": "engineer",
         "interests": ["hiking"],
         "looking_for": "long-term",
+        "agent": True,
     }
 
 
@@ -597,9 +598,11 @@ def make_people() -> tuple[Profile, Persona, Profile, Persona]:
 def test_build_rater_input_has_expected_structure() -> None:
     rater, persona, target, _ = make_people()
     rater_input = build_rater_input(rater, persona, target)
-    assert rater_input["rater_profile"] == rater.model_dump()
+    assert rater_input["rater_profile"] == rater.model_dump(exclude={"agent"})
     assert rater_input["rater_persona"] == "RATER_PERSONA_TEXT"
-    assert rater_input["target_profile"] == target.model_dump()
+    assert rater_input["target_profile"] == target.model_dump(exclude={"agent"})
+    assert "agent" not in rater_input["rater_profile"]
+    assert "agent" not in rater_input["target_profile"]
     assert rater_input["scale"]["anchors"] == {
         "1": "no interest",
         "5": "neutral",

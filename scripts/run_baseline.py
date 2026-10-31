@@ -42,6 +42,7 @@ def main() -> None:
                 "job": job,
                 "interests": interests,
                 "looking_for": looking_for,
+                "agent": True,
             })
             manager.add_persona(profile.user_id, persona)
 

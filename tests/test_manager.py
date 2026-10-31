@@ -35,6 +35,7 @@ def profile_data(**overrides: Any) -> dict[str, Any]:
         "job": "engineer",
         "interests": ["hiking"],
         "looking_for": "long-term",
+        "agent": True,
     }
     return {**data, **overrides}
 
@@ -105,7 +106,7 @@ def test_add_profile_rejects_invalid_supplied_id(
 
 @pytest.mark.parametrize(
     "field",
-    ["name", "age", "height_cm", "religion", "school", "job", "interests", "looking_for"],
+    ["name", "age", "height_cm", "religion", "school", "job", "interests", "looking_for", "agent"],
 )
 def test_add_profile_rejects_missing_field(
     manager: ProfileManager, field: str
@@ -139,6 +140,9 @@ def test_add_profile_rejects_missing_field(
         {"looking_for": "Long-Term"},
         {"looking_for": ""},
         {"looking_for": None},
+        {"agent": 1},
+        {"agent": "true"},
+        {"agent": None},
         {"nickname": "unknown field"},
     ],
 )
@@ -165,6 +169,13 @@ def test_add_profile_accepts_bounds(
 def test_looking_for_round_trips(manager: ProfileManager, looking_for: str) -> None:
     profile = manager.add_profile(profile_data(looking_for=looking_for))
     assert manager.get_profile(profile.user_id).looking_for == looking_for
+
+
+@pytest.mark.parametrize("agent", [True, False])
+def test_agent_flag_round_trips(manager: ProfileManager, agent: bool) -> None:
+    profile = manager.add_profile(profile_data(agent=agent))
+    assert manager.get_profile(profile.user_id).agent is agent
+    assert manager.list_profiles()[0].agent is agent
 
 
 def test_interests_are_normalized_and_round_trip(manager: ProfileManager) -> None:
@@ -418,7 +429,7 @@ def test_database_constraints_reject_bad_rows(
     conn.execute("PRAGMA foreign_keys = ON")
     for user_id in ("a", "b"):
         conn.execute(
-            "INSERT INTO profiles VALUES (?, 'n', 30, 170, 'r', 's', 'j', '[]', 'long-term')",
+            "INSERT INTO profiles VALUES (?, 'n', 30, 170, 'r', 's', 'j', '[]', 'long-term', 1)",
             (user_id,),
         )
     with pytest.raises(sqlite3.IntegrityError):
@@ -716,6 +727,7 @@ def test_concurrent_edits_to_different_fields_are_not_lost(
         {"job": "new job"},
         {"interests": ["new interest"]},
         {"looking_for": "just a date"},
+        {"agent": False},
     ]
 
     with ThreadPoolExecutor(max_workers=len(edits)) as pool:

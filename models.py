@@ -55,6 +55,7 @@ class Profile(BaseModel):
     job: NonEmptyStr
     interests: list[str] = Field(min_length=1)
     looking_for: Literal["short-term", "long-term", "just a date"]
+    agent: bool = Field(strict=True)  # True for a simulated user, False for a real person.
 
     @field_validator("user_id")
     @classmethod

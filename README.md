@@ -117,6 +117,7 @@ ana = manager.add_profile({
     "job": "nurse",
     "interests": ["Hiking", " chess "],
     "looking_for": "long-term",  # Or "short-term" or "just a date".
+    "agent": True,  # True for a simulated user, False for a real person.
 })
 ben = manager.add_profile({
     "name": "Ben",
@@ -127,6 +128,7 @@ ben = manager.add_profile({
     "job": "teacher",
     "interests": ["chess"],
     "looking_for": "just a date",
+    "agent": True,
 })
 print(ana.interests)  # ['hiking', 'chess']
 
@@ -160,6 +162,7 @@ Invalid data raises `pydantic.ValidationError`, and an unknown user raises `stor
 ## Behavior to know about
 
 - **Re-rating:** a rating replaces an earlier one with the same rater, target, and run, including its transcript. If `raw_output` and `input_snapshot` aren't passed again, the old transcript is deleted.
+- **The `agent` flag:** raters aren't shown it, but matchers can read it because it's on the profile. Runs don't filter on it, so a matcher can show real people's profiles to agents if both are in the same database.
 - **Mutual pairs across runs:** with `run_id=None`, both scores must still come from the same run. A pair that qualifies in several runs appears once per run, and each result has a `run_id`.
 - **Seeded IDs:** IDs repeat only if the seed and the order of `add_profile` calls both match. A failed validation also uses up an ID, and running the same seed against an existing database raises `DuplicateProfileError`.
 - **Deleting across two files:** the two databases can't share a transaction. Hidden data is deleted first, so if a delete fails partway, calling it again finishes the job.

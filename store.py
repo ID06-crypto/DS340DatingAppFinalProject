@@ -24,7 +24,8 @@ SCHEMA = (
         school      TEXT NOT NULL,
         job         TEXT NOT NULL,
         interests   TEXT NOT NULL,
-        looking_for TEXT NOT NULL
+        looking_for TEXT NOT NULL,
+        agent       INTEGER NOT NULL CHECK (agent IN (0, 1))
     )
     """,
     """
@@ -111,6 +112,7 @@ def _profile_to_row(profile: Profile) -> dict[str, object]:
 def _row_to_profile(row: sqlite3.Row) -> Profile:
     data = dict(row)
     data["interests"] = json.loads(data["interests"])
+    data["agent"] = bool(data["agent"])  # SQLite stores booleans as 0 and 1.
     return Profile.model_validate(data)
 
 

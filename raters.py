@@ -54,12 +54,13 @@ def build_rater_input(
     """Build the structured input a rater model receives.
 
     The target appears only as a public Profile. There's no parameter through which
-    their persona could arrive.
+    their persona could arrive. The agent flag is left out so that knowing who's
+    simulated can't influence the score.
     """
     return {
-        "rater_profile": rater_profile.model_dump(),
+        "rater_profile": rater_profile.model_dump(exclude={"agent"}),
         "rater_persona": rater_persona.description,
-        "target_profile": target_profile.model_dump(),
+        "target_profile": target_profile.model_dump(exclude={"agent"}),
         "scale": SCORE_SCALE,
     }
 
