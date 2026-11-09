@@ -4,7 +4,7 @@ import statistics
 
 from pydantic import BaseModel, ConfigDict
 
-from matching import is_compatible
+from models import mutually_interested
 from store import Store
 
 DEFAULT_WINDOWS = 10
@@ -42,12 +42,15 @@ def learning_curve(scores: list[float], n_windows: int = DEFAULT_WINDOWS) -> lis
 def compute_metrics(store: Store, run_id: str, n_windows: int = DEFAULT_WINDOWS) -> RunMetrics:
     ratings = store.ratings_in_run(run_id)
     scores = [rating.score for rating in ratings]
-    profiles = {profile.user_id: profile for profile in store.list_all_profiles()}
+    gender = {profile.user_id: profile.gender for profile in store.list_all_profiles()}
+    interested_in = store.all_preferences()
 
-    n_compatible = sum(
-        is_compatible(profiles[rating.rater_id], profiles[rating.target_id])
-        for rating in ratings
-    )
+    def compatible(a: str, b: str) -> bool:
+        if a not in interested_in or b not in interested_in:
+            return False
+        return mutually_interested(gender[a], interested_in[a], gender[b], interested_in[b])
+
+    n_compatible = sum(compatible(rating.rater_id, rating.target_id) for rating in ratings)
     score_of = {(rating.rater_id, rating.target_id): rating.score for rating in ratings}
     # Comparing IDs counts each pair once, not once per direction.
     match_chances = [

@@ -13,8 +13,8 @@ HOBBIES_PATH = Path(__file__).resolve().parent / "hobbylist.csv"
 SCHOOL = "BU"
 GAY_RATE = 0.03  # The share of users interested in their own gender.
 NAMES_BY_GENDER = {"man": MEN_NAMES, "woman": WOMEN_NAMES}
-SAME_GENDER = {"man": "men", "woman": "women"}
-OPPOSITE_GENDER = {"man": "women", "woman": "men"}
+SAME_GENDER = {"man": "man", "woman": "woman"}
+OPPOSITE_GENDER = {"man": "woman", "woman": "man"}
 CLUBS_OPEN_TO = {
     "man": [club for club in BU_CLUBS if club not in WOMEN_ONLY_CLUBS],
     "woman": [club for club in BU_CLUBS if club not in MEN_ONLY_CLUBS],
@@ -68,11 +68,12 @@ def generate_profile(
     gay_rate: float = GAY_RATE,
     rng: random.Random | None = None,
 ) -> dict[str, Any]:
-    """Return one random agent profile, ready for ProfileManager.add_profile.
+    """Return one random agent profile, plus "interested_in", which is private.
 
-    add_profile validates the result and generates its user_id. A seeded rng makes
-    the profile reproducible. Names and clubs are limited to those fitting the user's
-    gender.
+    Pop "interested_in" and pass it to ProfileManager.set_preferences, and pass the rest
+    to ProfileManager.add_profile, which generates the user_id. A seeded rng makes the
+    profile reproducible, and the draws are in the same order as before preferences
+    moved off profiles. Names and clubs are limited to those fitting the user's gender.
     """
     rng = rng if rng is not None else random.Random()
     gender = rng.choice(tuple(SAME_GENDER))
@@ -87,7 +88,7 @@ def generate_profile(
         "interests": rng.sample(HOBBIES, rng.randint(1, MAX_INTERESTS)),
         "clubs": rng.sample(CLUBS_OPEN_TO[gender], rng.randint(0, MAX_CLUBS)),
         "gender": gender,
-        "interested_in": SAME_GENDER[gender] if rng.random() < gay_rate else OPPOSITE_GENDER[gender],
+        "interested_in": [SAME_GENDER[gender] if rng.random() < gay_rate else OPPOSITE_GENDER[gender]],
         "looking_for": rng.choice(LOOKING_FOR),
         "agent": True,
     }

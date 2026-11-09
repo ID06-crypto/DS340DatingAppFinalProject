@@ -1,14 +1,24 @@
-"""The public interface for profiles, ratings, and personas.
+"""The public interface for profiles, preferences, ratings, and personas.
 
 ProfileManager opens the persona database, so matchers must not use it. They receive a
 matching.PublicView instead.
 """
 
 import random
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from models import Persona, Profile, Rating, RatingTranscript, Run, generate_user_id
+from models import (
+    LIVE_RUN_ID,
+    Persona,
+    Preferences,
+    Profile,
+    Rating,
+    RatingTranscript,
+    Run,
+    generate_user_id,
+)
 from personas import PersonaStore
 from store import MutualPair, ProfileNotFoundError, Store
 
@@ -66,6 +76,21 @@ class ProfileManager:
     def list_profiles(self) -> list[Profile]:
         return self.store.list_all_profiles()
 
+    # Preferences (private) and eligibility
+
+    def set_preferences(self, user_id: str, interested_in: Iterable[str]) -> Preferences:
+        """Replace which genders this user wants to be shown. Raises ValidationError if empty."""
+        preferences = Preferences(user_id=user_id, interested_in=frozenset(interested_in))
+        self.store.set_preferences(preferences)
+        return preferences
+
+    def get_preferences(self, user_id: str) -> Preferences | None:
+        return self.store.get_preferences(user_id)
+
+    def eligible_candidates(self, user_id: str, run_id: str = LIVE_RUN_ID) -> list[str]:
+        """Who this user may be shown next. See Store.eligible_candidates for the rules."""
+        return self.store.eligible_candidates(user_id, run_id)
+
     # Ratings
 
     def add_rating(
@@ -78,6 +103,7 @@ class ProfileManager:
         raw_output: str | None = None,
         input_snapshot: str | None = None,
         step: int | None = None,
+        matcher: str | None = None,
     ) -> Rating:
         """Record a rating, replacing any earlier one for the same rater, target, and run.
 
@@ -91,6 +117,7 @@ class ProfileManager:
             run_id=run_id,
             model_version=model_version,
             step=step,
+            matcher=matcher,
         )
         transcript = RatingTranscript(
             rater_id=rater_id,

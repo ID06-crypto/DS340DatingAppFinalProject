@@ -19,10 +19,9 @@ from matching import (
     Matcher,
     PublicView,
     RandomMatcher,
-    is_compatible,
 )
 from metrics import compute_metrics, learning_curve
-from models import Persona, Profile, Rating, generate_user_id
+from models import Persona, Profile, Rating, generate_user_id, mutually_interested
 from personas import PersonaStore
 from raters import (
     JEV_MODEL,
@@ -59,7 +58,6 @@ def profile_data(name: str = "Sam") -> dict[str, Any]:
         "interests": ["hiking"],
         "clubs": ["chess club"],
         "gender": "man",
-        "interested_in": "women",
         "looking_for": "long-term",
         "agent": True,
     }
@@ -70,10 +68,15 @@ def manager(tmp_path: Path) -> ProfileManager:
     return ProfileManager(tmp_path / "main.db", tmp_path / "personas.db")
 
 
+EVERYONE = ["man", "woman", "nonbinary"]
+
+
 def add_users(manager: ProfileManager, count: int, persona: bool = True) -> list[str]:
+    """Users who are all interested in everyone, so each is in every other's pool."""
     users = []
     for _ in range(count):
         user_id = manager.add_profile(profile_data()).user_id
+        manager.set_preferences(user_id, EVERYONE)
         if persona:
             manager.add_persona(user_id, f"SECRET_PERSONA_{user_id}")
         users.append(user_id)
@@ -520,6 +523,7 @@ def test_view_public_interface_is_only_public_data() -> None:
         "ratings_by_rater",
         "ratings_of_target",
         "already_rated",
+        "eligible_candidates",  # Only user_ids, with preferences applied but not revealed.
     }
 
 
@@ -815,11 +819,21 @@ def test_jev_without_an_api_key_raises(monkeypatch: pytest.MonkeyPatch) -> None:
 # Compatibility
 
 
+PLURAL_TO_GENDER = {"men": "man", "women": "woman"}
+
+
 def public_user(manager: ProfileManager, gender: str, interested_in: str) -> str:
-    data = {**profile_data(), "gender": gender, "interested_in": interested_in}
-    user_id = manager.add_profile(data).user_id
+    """A user interested in one gender, written as "men" or "women" for readability."""
+    user_id = manager.add_profile({**profile_data(), "gender": gender}).user_id
+    manager.set_preferences(user_id, [PLURAL_TO_GENDER[interested_in]])
     manager.add_persona(user_id, f"SECRET_PERSONA_{user_id}")
     return user_id
+
+
+def compatible(manager: ProfileManager, a: str, b: str) -> bool:
+    gender = {p.user_id: p.gender for p in manager.list_profiles()}
+    interested_in = manager.store.all_preferences()
+    return mutually_interested(gender[a], interested_in[a], gender[b], interested_in[b])
 
 
 @pytest.mark.parametrize(
@@ -833,17 +847,18 @@ def public_user(manager: ProfileManager, gender: str, interested_in: str) -> str
         (("man", "men"), ("woman", "men"), False),
     ],
 )
-def test_is_compatible_needs_interest_both_ways(
+def test_eligible_pool_needs_interest_both_ways(
     manager: ProfileManager,
     first: tuple[str, str],
     second: tuple[str, str],
     expected: bool,
 ) -> None:
     view = PublicView(manager.store, RUN)
-    a = view.get_profile(public_user(manager, *first))
-    b = view.get_profile(public_user(manager, *second))
-    assert is_compatible(a, b) is expected
-    assert is_compatible(b, a) is expected
+    a = public_user(manager, *first)
+    b = public_user(manager, *second)
+    assert (b in view.eligible_candidates(a)) is expected
+    assert (a in view.eligible_candidates(b)) is expected
+    assert compatible(manager, a, b) is expected
 
 
 def test_compatible_matcher_only_shows_compatible_profiles(
@@ -874,9 +889,8 @@ def test_compatible_matcher_only_shows_compatible_profiles(
     assert summary.steps_completed == 10
     assert summary.failures == 0
     assert summary.users_exhausted == 7
-    profiles = {p.user_id: p for p in manager.list_profiles()}
     for rating in manager.ratings_in_run(RUN):
-        assert is_compatible(profiles[rating.rater_id], profiles[rating.target_id])
+        assert compatible(manager, rating.rater_id, rating.target_id)
 
 
 def test_compatible_matcher_runs_are_reproducible(tmp_path: Path) -> None:
@@ -1176,14 +1190,32 @@ def test_n_workers_must_be_positive(manager: ProfileManager) -> None:
         fake_run(manager, RandomMatcher(random.Random(SEED)), n_workers=0)
 
 
-def test_compatible_matcher_reads_profiles_only_once(manager: ProfileManager, monkeypatch: pytest.MonkeyPatch) -> None:
-    add_users(manager, 6)
-    calls = []
-    original = PublicView.list_profiles
-    monkeypatch.setattr(PublicView, "list_profiles", lambda self: calls.append(1) or original(self))
-    summary = fake_run(manager, CompatibleRandomMatcher(random.Random(SEED)), n_steps=10)
-    assert len(calls) == 1
-    assert summary.steps_completed == 0  # Every test user is the same gender, so none match.
+def test_compatible_random_is_random_under_its_old_name() -> None:
+    assert CompatibleRandomMatcher.name == "compatible-random"
+    assert issubclass(CompatibleRandomMatcher, RandomMatcher)
+
+
+def test_live_run_id_is_reserved_for_real_people(manager: ProfileManager) -> None:
+    add_users(manager, 2)
+    with pytest.raises(ValueError, match="reserved"):
+        run_simulation(manager, RandomMatcher(random.Random(SEED)), FakeRater(random.Random(SEED)), "live", 2, SEED)
+
+
+def test_simulation_ratings_record_the_matcher(manager: ProfileManager) -> None:
+    add_users(manager, 3)
+    fake_run(manager, CompatibleRandomMatcher(random.Random(SEED)), n_steps=3)
+    assert {r.matcher for r in manager.ratings_in_run(RUN)} == {"compatible-random"}
+
+
+def test_rater_input_has_both_genders_and_no_preferences(manager: ProfileManager) -> None:
+    rater_id, target_id = add_users(manager, 2)
+    manager.edit_profile(target_id, gender="nonbinary")
+    rater_input = build_rater_input(
+        manager.get_profile(rater_id), manager.get_persona(rater_id), manager.get_profile(target_id)
+    )
+    assert rater_input["rater_profile"]["gender"] == "man"
+    assert rater_input["target_profile"]["gender"] == "nonbinary"
+    assert "interested_in" not in json.dumps(rater_input)
 
 
 def test_compatible_matcher_never_repeats_or_picks_self(manager: ProfileManager) -> None:

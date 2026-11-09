@@ -44,9 +44,10 @@ def build_rater_input(
 ) -> dict[str, Any]:
     """Build the structured input a rater model receives.
 
-    The target appears only as a public Profile. There's no parameter through which
-    their persona could arrive. The agent flag is left out so that knowing who's
-    simulated can't influence the score.
+    The target appears only as a public Profile, which includes their gender, as does
+    the rater's own profile. There's no parameter through which the target's persona or
+    preferences could arrive. The agent flag is left out so that knowing who's simulated
+    can't influence the score.
     """
     return {
         "rater_profile": rater_profile.model_dump(exclude={"agent"}),
@@ -93,8 +94,7 @@ JEV_QUESTION = Noul(
     instructions=(
         "`rater` is a college student using a dating app, and `rater_persona` says what "
         "they're like and what they want in a partner. Judging as this person would, and "
-        "following the preferences in `rater_persona`, would `rater` like `shown_profile`? "
-        "`rater.interested_in` says who they're attracted to, so anyone outside it is a no."
+        "following the preferences in `rater_persona`, would `rater` like `shown_profile`?"
     ),
 )
 

@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict
 
 from manager import ProfileManager
 from matching import Matcher, PublicView
-from models import Rating
+from models import LIVE_RUN_ID, Rating
 from raters import Rater, RatingResult
 from store import RunNotFoundError
 
@@ -69,9 +69,9 @@ def _rate(
     This can run on a worker thread, where one failed rating mustn't affect the others.
     """
     try:
-        # Saving a repeat would silently overwrite the user's earlier rating in this run.
-        if target_id in view.already_rated(user_id):
-            raise ValueError(f"user {user_id} has already rated {target_id} in this run")
+        # Also rules out repeats, which would silently overwrite an earlier rating.
+        if target_id not in view.eligible_candidates(user_id):
+            raise ValueError(f"matcher picked {target_id}, outside {user_id}'s eligible pool")
         persona = manager.get_persona(user_id)
         if persona is None:
             raise ValueError(f"user {user_id} no longer has a persona")
@@ -158,6 +158,8 @@ def run_simulation(
         raise ValueError(f"n_steps must be at least 1, got {n_steps}")
     if n_workers < 1:
         raise ValueError(f"n_workers must be at least 1, got {n_workers}")
+    if run_id == LIVE_RUN_ID:
+        raise ValueError(f"run_id {LIVE_RUN_ID!r} is reserved for real people's ratings")
 
     pool = _eligible_users(manager)
     saved = _saved_ratings(manager, run_id, matcher, seed) if resume else None
@@ -226,6 +228,7 @@ def run_simulation(
                         raw_output=outcome.raw_output,
                         input_snapshot=outcome.input_snapshot,
                         step=step,
+                        matcher=matcher.name,
                     )
                 except Exception as error:
                     record_failure(error, step, user_id, target_id)

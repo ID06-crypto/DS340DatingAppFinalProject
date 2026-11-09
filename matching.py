@@ -1,6 +1,8 @@
 """The matcher interface, and what a matcher is allowed to see.
 
-To add a real algorithm, subclass Matcher. Nothing else needs to change.
+To add a real algorithm, subclass Matcher. Nothing else needs to change. A matcher must
+choose from view.eligible_candidates(user_id). Anything else counts as a failed step in a
+simulation and is refused by the app.
 """
 
 import random
@@ -10,26 +12,17 @@ from models import Profile, PublicProfile, Rating
 from store import Store
 
 
-_GENDER_OF_INTEREST = {"men": "man", "women": "woman"}
-
 
 def _to_public(profile: Profile) -> PublicProfile:
     return PublicProfile.model_validate(profile.model_dump(exclude={"agent"}))
-
-
-def is_compatible(user: PublicProfile, other: PublicProfile) -> bool:
-    """Whether each of the two is the gender the other is interested in."""
-    return (
-        _GENDER_OF_INTEREST[user.interested_in] == other.gender
-        and _GENDER_OF_INTEREST[other.interested_in] == user.gender
-    )
 
 
 class PublicView:
     """Read-only access to public data, limited to one run.
 
     It's built from the main store alone, so it holds no reference to personas.db or
-    to ProfileManager. Profiles come back as PublicProfile, without the agent flag.
+    to ProfileManager. Profiles come back as PublicProfile, without the agent flag, and
+    preferences are never exposed. The eligible pool applies them without revealing them.
 
     Only this run's ratings are visible, so a run's results don't depend on what
     earlier runs left in the database.
@@ -50,6 +43,10 @@ class PublicView:
 
     def get_profile(self, user_id: str) -> PublicProfile:
         return _to_public(self._store.get_profile(user_id))
+
+    def eligible_candidates(self, user_id: str) -> list[str]:
+        """The user_ids this user may be shown next, sorted. Matchers must pick from these."""
+        return self._store.eligible_candidates(user_id, self._run_id)
 
     def ratings_by_rater(self, rater_id: str) -> list[Rating]:
         return self._store.ratings_by_rater(rater_id, self._run_id)
@@ -77,7 +74,11 @@ class Matcher(ABC):
 
 
 class RandomMatcher(Matcher):
-    """Picks uniformly among profiles this user hasn't rated in this run."""
+    """Picks uniformly from the user's eligible pool.
+
+    This is the baseline a real matcher has to beat. The pool already applies mutual
+    gender interest, so a matcher gets no credit just for that.
+    """
 
     name = "random"
 
@@ -85,40 +86,15 @@ class RandomMatcher(Matcher):
         self._rng = rng
 
     def next_profile(self, user_id: str, view: PublicView) -> str | None:
-        seen = view.already_rated(user_id) | {user_id}
-        # Sorted so that the choice doesn't depend on the order profiles were stored.
-        candidates = sorted(p.user_id for p in view.list_profiles() if p.user_id not in seen)
+        candidates = view.eligible_candidates(user_id)  # Already sorted, so seeds repeat.
         return self._rng.choice(candidates) if candidates else None
 
 
-class CompatibleRandomMatcher(Matcher):
-    """Picks uniformly among compatible profiles this user hasn't rated in this run.
+class CompatibleRandomMatcher(RandomMatcher):
+    """The same as RandomMatcher, under the name earlier runs were recorded with.
 
-    This is the baseline a real matcher has to beat. Filtering by gender and interest
-    is easy, so a matcher shouldn't get credit just for doing that.
-
-    Profiles are read once and kept, which is much faster on long runs. Use a new matcher
-    for each run, and don't edit profiles during one.
+    Before the eligible pool existed, only this matcher filtered by gender. It's kept so
+    that resuming or comparing those runs still finds the matcher name they used.
     """
 
     name = "compatible-random"
-
-    def __init__(self, rng: random.Random) -> None:
-        self._rng = rng
-        self._profiles: list[PublicProfile] | None = None
-        self._compatible: dict[str, list[str]] = {}
-
-    def _compatible_with(self, user_id: str, view: PublicView) -> list[str]:
-        if user_id not in self._compatible:
-            if self._profiles is None:
-                self._profiles = view.list_profiles()
-            user = next(p for p in self._profiles if p.user_id == user_id)
-            self._compatible[user_id] = sorted(
-                p.user_id for p in self._profiles if p.user_id != user_id and is_compatible(user, p)
-            )
-        return self._compatible[user_id]
-
-    def next_profile(self, user_id: str, view: PublicView) -> str | None:
-        seen = view.already_rated(user_id)
-        candidates = [c for c in self._compatible_with(user_id, view) if c not in seen]
-        return self._rng.choice(candidates) if candidates else None

@@ -1,6 +1,8 @@
-"""SQLite persistence for profiles, ratings, and runs (main.db).
+"""SQLite persistence for profiles, preferences, ratings, and runs (main.db).
 
 This module can't reach personas.db, and nothing stored here contains persona text.
+main.db also holds the app's tables (see live_schema.py), because a user's eligible pool
+depends on accounts, blocks, matches, and impressions.
 """
 
 import json
@@ -11,7 +13,8 @@ from pathlib import Path
 from typing import NamedTuple
 
 from db import connect, initialize, transaction
-from models import Profile, Rating, Run
+from live_schema import LIVE_SCHEMA
+from models import LIVE_RUN_ID, Preferences, Profile, Rating, Run
 
 SCHEMA = (
     """
@@ -27,7 +30,6 @@ SCHEMA = (
         interests     TEXT NOT NULL,
         clubs         TEXT NOT NULL,
         gender        TEXT NOT NULL,
-        interested_in TEXT NOT NULL,
         looking_for   TEXT NOT NULL,
         agent         INTEGER NOT NULL CHECK (agent IN (0, 1))
     )
@@ -41,12 +43,21 @@ SCHEMA = (
         timestamp      TEXT NOT NULL,
         model_version  TEXT,
         step           INTEGER,
+        matcher        TEXT,
         PRIMARY KEY (rater_id, target_id, run_id),
         CHECK (rater_id <> target_id)
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_ratings_target ON ratings (target_id, run_id)",
     "CREATE INDEX IF NOT EXISTS idx_ratings_run ON ratings (run_id)",
+    """
+    CREATE TABLE IF NOT EXISTS preferences (
+        user_id TEXT NOT NULL REFERENCES profiles (user_id) ON DELETE CASCADE,
+        gender  TEXT NOT NULL CHECK (gender IN ('man', 'woman', 'nonbinary')),
+        PRIMARY KEY (user_id, gender)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_preferences_gender ON preferences (gender, user_id)",
     """
     CREATE TABLE IF NOT EXISTS runs (
         run_id       TEXT PRIMARY KEY,
@@ -97,6 +108,10 @@ class DuplicateRunError(ValueError):
     """A run with this run_id already exists."""
 
 
+class OutdatedSchemaError(RuntimeError):
+    """The database was made before preferences moved off profiles. Migrate it first."""
+
+
 class MutualPair(NamedTuple):
     """Two users who both scored each other at or above a threshold. user_a < user_b."""
 
@@ -139,10 +154,64 @@ def _row_to_run(row: sqlite3.Row) -> Run:
     return Run.model_validate(data)
 
 
+# A user's eligible pool. Each condition is one rule, so the rules can be read directly:
+# mutual gender interest, approved accounts, no blocks either way, no active match, and
+# nobody already rated in this run (or already shown, in the live app).
+_ELIGIBLE_CANDIDATES = """
+    SELECT c.user_id
+    FROM profiles AS me
+    JOIN profiles AS c ON c.user_id <> me.user_id
+    WHERE me.user_id = :me
+        AND EXISTS (SELECT 1 FROM preferences WHERE user_id = :me AND gender = c.gender)
+        AND EXISTS (SELECT 1 FROM preferences WHERE user_id = c.user_id AND gender = me.gender)
+        AND CASE WHEN :live
+            THEN EXISTS (
+                SELECT 1 FROM accounts WHERE user_id = c.user_id AND status = 'approved'
+            )
+            -- Simulated users have no account, and count as approved in simulations.
+            ELSE NOT EXISTS (
+                SELECT 1 FROM accounts WHERE user_id = c.user_id AND status <> 'approved'
+            )
+        END
+        AND NOT EXISTS (
+            SELECT 1 FROM blocks
+            WHERE (blocker_id = :me AND blocked_id = c.user_id)
+                OR (blocker_id = c.user_id AND blocked_id = :me)
+        )
+        AND NOT EXISTS (
+            SELECT 1 FROM matches
+            WHERE status = 'active'
+                AND user_a = MIN(:me, c.user_id) AND user_b = MAX(:me, c.user_id)
+        )
+        AND NOT EXISTS (
+            SELECT 1 FROM ratings
+            WHERE rater_id = :me AND target_id = c.user_id AND run_id = :run_id
+        )
+        AND NOT (:live AND EXISTS (
+            SELECT 1 FROM impressions WHERE viewer_id = :me AND target_id = c.user_id
+        ))
+    ORDER BY c.user_id
+"""
+
+
+def _check_schema(db_path: str | Path) -> None:
+    """Refuse a database from before preferences moved off profiles, with how to fix it."""
+    if not Path(db_path).exists():
+        return
+    with connect(db_path) as conn:
+        profiles = {row["name"] for row in conn.execute("PRAGMA table_info(profiles)")}
+        ratings = {row["name"] for row in conn.execute("PRAGMA table_info(ratings)")}
+    if "interested_in" in profiles or (ratings and "matcher" not in ratings):
+        raise OutdatedSchemaError(
+            f"{db_path} uses an older schema. Run: python scripts/migrate_preferences.py {db_path}"
+        )
+
+
 class Store:
     def __init__(self, db_path: str | Path = "main.db") -> None:
         self.db_path = db_path
-        initialize(db_path, SCHEMA)
+        _check_schema(db_path)
+        initialize(db_path, SCHEMA + LIVE_SCHEMA)
 
     # Profiles
 
@@ -217,6 +286,54 @@ class Store:
     def export_profiles_json(self, path: str | Path) -> None:
         profiles = [profile.model_dump() for profile in self.list_all_profiles()]
         Path(path).write_text(json.dumps(profiles, indent=2), encoding="utf-8")
+
+    # Preferences (private)
+
+    def set_preferences(self, preferences: Preferences) -> None:
+        """Replace a user's preferences."""
+        with transaction(self.db_path) as conn:
+            if conn.execute(
+                "SELECT 1 FROM profiles WHERE user_id = ?", (preferences.user_id,)
+            ).fetchone() is None:
+                raise _not_found(preferences.user_id)
+            conn.execute("DELETE FROM preferences WHERE user_id = ?", (preferences.user_id,))
+            conn.executemany(
+                "INSERT INTO preferences (user_id, gender) VALUES (?, ?)",
+                [(preferences.user_id, gender) for gender in sorted(preferences.interested_in)],
+            )
+
+    def get_preferences(self, user_id: str) -> Preferences | None:
+        with connect(self.db_path) as conn:
+            rows = conn.execute(
+                "SELECT gender FROM preferences WHERE user_id = ?", (user_id,)
+            ).fetchall()
+        if not rows:
+            return None
+        return Preferences(user_id=user_id, interested_in=frozenset(row["gender"] for row in rows))
+
+    def all_preferences(self) -> dict[str, frozenset[str]]:
+        """Everyone's preferences at once, for analysis code that needs many."""
+        with connect(self.db_path) as conn:
+            rows = conn.execute("SELECT user_id, gender FROM preferences").fetchall()
+        preferences: dict[str, set[str]] = {}
+        for row in rows:
+            preferences.setdefault(row["user_id"], set()).add(row["gender"])
+        return {user: frozenset(genders) for user, genders in preferences.items()}
+
+    def eligible_candidates(self, user_id: str, run_id: str = LIVE_RUN_ID) -> list[str]:
+        """The user_ids this user may be shown next in this run, sorted.
+
+        Only approved accounts, never themselves, nobody blocked either way, nobody they
+        have an active match with, mutual gender interest, and nobody they've already
+        rated in this run. In the live app, also nobody they've already been shown.
+        Users without preferences have an empty pool and appear in nobody's.
+        """
+        with connect(self.db_path) as conn:
+            rows = conn.execute(
+                _ELIGIBLE_CANDIDATES,
+                {"me": user_id, "run_id": run_id, "live": run_id == LIVE_RUN_ID},
+            ).fetchall()
+        return [row["user_id"] for row in rows]
 
     # Ratings
 

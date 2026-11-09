@@ -1,0 +1,200 @@
+{
+  "created": "2026-11-08T21:31:04",
+  "like_threshold": 0.5,
+  "test_runs": [
+    "random-baseline-100k"
+  ],
+  "data": {
+    "users": {
+      "train": 1280,
+      "validation": 320,
+      "test": 400
+    },
+    "ratings": {
+      "train": 41276,
+      "validation": 2496,
+      "test": 3965
+    },
+    "like_rate": {
+      "train": 0.2644636108,
+      "validation": 0.2744391026,
+      "test": 0.2809583859
+    },
+    "pairs_rated_both_ways": {
+      "train": 1222,
+      "validation": 74,
+      "test": 143
+    },
+    "mutual_likes": {
+      "train": 150,
+      "validation": 9,
+      "test": 23
+    },
+    "mutual_rate": {
+      "train": 0.1227495908,
+      "validation": 0.1216216216,
+      "test": 0.1608391608
+    }
+  },
+  "directional": {
+    "Always no": {
+      "n": 3965.0,
+      "positive_rate": 0.2809583859,
+      "threshold": 0.5,
+      "accuracy": 0.7190416141,
+      "balanced_accuracy": 0.5,
+      "precision": null,
+      "recall": 0.0,
+      "f1": 0.0,
+      "type_1_rate": 0.0,
+      "type_2_rate": 1.0,
+      "bias": -0.2809583859,
+      "mcc": 0.0,
+      "roc_auc": 0.5,
+      "pr_auc": 0.2809583859,
+      "brier": 0.2809583859,
+      "log_loss": 3.8815842655
+    },
+    "Base rate": {
+      "n": 3965.0,
+      "positive_rate": 0.2809583859,
+      "threshold": 0.2644636108,
+      "accuracy": 0.2809583859,
+      "balanced_accuracy": 0.5,
+      "precision": 0.2809583859,
+      "recall": 1.0,
+      "f1": 0.4386690293,
+      "type_1_rate": 1.0,
+      "type_2_rate": 0.0,
+      "bias": -0.0164947751,
+      "mcc": 0.0,
+      "roc_auc": 0.5,
+      "pr_auc": 0.2809583859,
+      "brier": 0.2022928489,
+      "log_loss": 0.5945465721
+    },
+    "Profile logistic": {
+      "n": 3965.0,
+      "positive_rate": 0.2809583859,
+      "threshold": 0.3527530398,
+      "accuracy": 0.7293820933,
+      "balanced_accuracy": 0.7415422287,
+      "precision": 0.5122534369,
+      "recall": 0.7692998205,
+      "f1": 0.614998206,
+      "type_1_rate": 0.286215363,
+      "type_2_rate": 0.2307001795,
+      "bias": -0.0057271919,
+      "mcc": 0.439651938,
+      "roc_auc": 0.8314727202,
+      "pr_auc": 0.6064985655,
+      "brier": 0.1459213279,
+      "log_loss": 0.4231320077
+    }
+  },
+  "mutual": {
+    "Always no": {
+      "n": 143.0,
+      "positive_rate": 0.1608391608,
+      "threshold": 0.5,
+      "accuracy": 0.8391608392,
+      "balanced_accuracy": 0.5,
+      "precision": null,
+      "recall": 0.0,
+      "f1": 0.0,
+      "type_1_rate": 0.0,
+      "type_2_rate": 1.0,
+      "bias": -0.1608391608,
+      "mcc": 0.0,
+      "roc_auc": 0.5,
+      "pr_auc": 0.1608391608,
+      "brier": 0.1608391608,
+      "log_loss": 2.2220759639
+    },
+    "Base rate": {
+      "n": 143.0,
+      "positive_rate": 0.1608391608,
+      "threshold": 0.0699410014,
+      "accuracy": 0.1608391608,
+      "balanced_accuracy": 0.5,
+      "precision": 0.1608391608,
+      "recall": 1.0,
+      "f1": 0.2771084337,
+      "type_1_rate": 1.0,
+      "type_2_rate": 0.0,
+      "bias": -0.0908981594,
+      "mcc": 0.0,
+      "roc_auc": 0.5,
+      "pr_auc": 0.1608391608,
+      "brier": 0.1432324006,
+      "log_loss": 0.4886940205
+    },
+    "Profile logistic": {
+      "n": 143.0,
+      "positive_rate": 0.1608391608,
+      "threshold": 0.2590728449,
+      "accuracy": 0.8811188811,
+      "balanced_accuracy": 0.7885869565,
+      "precision": 0.625,
+      "recall": 0.652173913,
+      "f1": 0.6382978723,
+      "type_1_rate": 0.075,
+      "type_2_rate": 0.347826087,
+      "bias": -0.0290134819,
+      "mcc": 0.5673905957,
+      "roc_auc": 0.8916666667,
+      "pr_auc": 0.641620271,
+      "brier": 0.0945999248,
+      "log_loss": 0.2874504176
+    }
+  },
+  "ceiling": {
+    "Directional": {
+      "accuracy": 0.9926860025,
+      "precision": 0.990063234,
+      "recall": 0.9838420108,
+      "f1": 0.9869428186,
+      "type_1_rate": 0.0038582953,
+      "type_2_rate": 0.0161579892
+    },
+    "Mutual": {
+      "accuracy": 0.993006993,
+      "precision": 1.0,
+      "recall": 0.9565217391,
+      "f1": 0.9777777778,
+      "type_1_rate": 0.0,
+      "type_2_rate": 0.0434782609
+    }
+  },
+  "ranking": {
+    "Always no": {
+      "within_rater_auc": 0.5,
+      "precision_at_3": 0.3687707641,
+      "lift_at_3": 0.0045530262,
+      "raters_counted": 301.0
+    },
+    "Base rate": {
+      "within_rater_auc": 0.5,
+      "precision_at_3": 0.3687707641,
+      "lift_at_3": 0.0045530262,
+      "raters_counted": 301.0
+    },
+    "Profile logistic": {
+      "within_rater_auc": 0.8362362346,
+      "precision_at_3": 0.6013289037,
+      "lift_at_3": 0.2371111657,
+      "raters_counted": 301.0
+    }
+  },
+  "run_level": {
+    "random-baseline-100k": {
+      "ratings": 99999.0,
+      "mean_like": 0.3241768418,
+      "pairs_rated_both_ways": 3104.0,
+      "expected_matches": 413.9786,
+      "expected_matches_per_1000_ratings": 4.1398273983,
+      "match_chance_per_pair": 0.1333693943,
+      "exposure_gini": 0.0871758068
+    }
+  }
+}

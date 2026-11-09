@@ -5,3 +5,9 @@ matplotlib
 pandas
 ipykernel
 anthropic>=2,<3
+scikit-learn
+fastapi
+uvicorn
+python-multipart
+pillow
+httpx

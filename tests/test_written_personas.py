@@ -38,7 +38,6 @@ def profile_data(name: str = "Sam") -> dict[str, Any]:
         "interests": ["hiking"],
         "clubs": ["chess club"],
         "gender": "man",
-        "interested_in": "women",
         "looking_for": "long-term",
         "agent": True,
     }

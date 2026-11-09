@@ -23,7 +23,10 @@ def main() -> None:
     rng = random.Random(SEED)
     manager = ProfileManager(ROOT / "main.db", ROOT / "personas.db", rng=rng)
     for _ in range(N_PROFILES):
-        manager.add_profile(generate_profile(rng=rng))
+        data = generate_profile(rng=rng)
+        interested_in = data.pop("interested_in")
+        profile = manager.add_profile(data)
+        manager.set_preferences(profile.user_id, interested_in)
     print("Profiles stored:", manager.count_profiles())
 
 

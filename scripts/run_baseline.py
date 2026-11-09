@@ -1,4 +1,4 @@
-"""Run the random matcher with the fake rater on a few fake users, in a temporary database."""
+"""Run the random matcher with the fake rater on six fake users, in a temporary database."""
 
 import logging
 import random
@@ -16,12 +16,14 @@ from simulation import run_simulation  # noqa: E402
 SEED = 42
 N_STEPS = 15
 
+EVERYONE = ["man", "woman", "nonbinary"]
 USERS = [
-    ("Ana", 29, 168, "none", "BU", "nursing", "nurse", ["hiking", "chess"], ["outdoors club"], "woman", "men", "long-term", "Values kindness."),
-    ("Ben", 31, 180, "catholic", "MIT", "physics", "teacher", ["chess"], ["chess club"], "man", "women", "just a date", "Wants to laugh a lot."),
-    ("Cam", 26, 175, "jewish", "NYU", "fine arts", "designer", ["art"], [], "man", "men", "short-term", "Loves ambition."),
-    ("Dee", 34, 160, "muslim", "UCLA", "political science", "lawyer", ["running"], ["debate", "running club"], "woman", "men", "long-term", "Wants stability."),
-    ("Eli", 28, 185, "hindu", "Yale", "history", "chef", ["cooking"], [], "man", "women", "short-term", "Seeks adventure."),
+    ("Ana", 29, 168, "none", "BU", "nursing", "nurse", ["hiking", "chess"], ["outdoors club"], "woman", ["man"], "long-term", "Values kindness."),
+    ("Ben", 31, 180, "catholic", "MIT", "physics", "teacher", ["chess"], ["chess club"], "man", ["woman"], "just a date", "Wants to laugh a lot."),
+    ("Cam", 26, 175, "jewish", "NYU", "fine arts", "designer", ["art"], [], "nonbinary", EVERYONE, "short-term", "Loves ambition."),
+    ("Dee", 34, 160, "muslim", "UCLA", "political science", "lawyer", ["running"], ["debate", "running club"], "woman", ["man", "nonbinary"], "long-term", "Wants stability."),
+    ("Eli", 28, 185, "hindu", "Yale", "history", "chef", ["cooking"], [], "man", ["woman", "nonbinary"], "short-term", "Seeks adventure."),
+    ("Fay", 27, 170, "none", "BU", "biology", "researcher", ["climbing"], [], "woman", ["man"], "short-term", "Loves the outdoors."),
 ]
 
 
@@ -44,10 +46,10 @@ def main() -> None:
                 "interests": interests,
                 "clubs": clubs,
                 "gender": gender,
-                "interested_in": interested_in,
                 "looking_for": looking_for,
                 "agent": True,
             })
+            manager.set_preferences(profile.user_id, interested_in)  # Private, unlike the profile.
             manager.add_persona(profile.user_id, persona)
 
         summary = run_simulation(

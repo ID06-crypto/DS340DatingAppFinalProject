@@ -2,10 +2,17 @@
 
 A local framework for training a reciprocal matching algorithm with AI agents as simulated users. In each step, a simulated user is shown one profile chosen by a matcher, rates it, and the rating is saved. The matcher is currently random, and simulated users rate through [Jev](https://docs.typesafe.ai/introduction/quickstart). The current users are all synthetic, as described in [Synthetic data](#synthetic-data).
 
+It also includes a JSON backend for the live study with about 100 invited BU students. That's covered in [The live app](#the-live-app).
+
 | File | Purpose |
 | --- | --- |
-| `models.py` | Pydantic models: `Profile`, `Rating`, `Persona`, `RatingTranscript`, `Run` |
-| `store.py` | Profiles, ratings, and runs, in `main.db` |
+| `models.py` | Pydantic models: `Profile`, `Preferences`, `Rating`, `Persona`, `RatingTranscript`, `Run` |
+| `store.py` | Profiles, private preferences, ratings, runs, and the eligible pool, in `main.db` |
+| `live_schema.py`, `live_store.py` | The live app's tables in `main.db`: accounts, sessions, matches, messages, blocks, reports, photos, impressions, and the audit log |
+| `app/` | The FastAPI backend for the live app |
+| `consent/v1.md` | The consent text users agree to, by version |
+| `scripts/seed_dev.py` | Creates a few fake approved accounts for local testing |
+| `scripts/migrate_preferences.py` | Upgrades databases made before preferences moved off profiles |
 | `personas.py` | Hidden data, in `personas.db`: personas and rating transcripts |
 | `db.py` | Connection and WAL helpers shared by both stores |
 | `manager.py` | `ProfileManager`, the storage interface for the rest of the project |
@@ -24,6 +31,9 @@ A local framework for training a reciprocal matching algorithm with AI agents as
 | `notebooks/written_personas.ipynb` | Writes sample personas with Claude and tests them on Jev, with charts |
 | `notebooks/final_dataset_check.ipynb` | Validates the final 2,000 users and their personas on Jev, with charts |
 | `notebooks/random_baseline_metrics.ipynb` | Metrics and charts for the 100,000-rating random baseline |
+| `evaluation.py` | Pair-level evaluation: user splits, classification metrics, calibration, bias, and ranking |
+| `notebooks/model_evaluation.ipynb` | Evaluates any model on "do these two people like each other?", with charts |
+| `scripts/build_test_pairs.py` | Rates pairs of test users both ways, to make a larger test set |
 | `SYNTHETIC_DATA_REPORT.txt` | How the data was made, everything tested, and the final results |
 
 ## Install
@@ -133,6 +143,10 @@ python scripts/run_experiment.py --run-id random-baseline-100k --steps 100000
 - **Parallel ratings:** `--workers` sets how many ratings run at once, and the default is 8. A matcher can't learn from a batch until it finishes, so one that learns from each rating should use 1 or a small number.
 - **Storage:** ratings live in their own table rather than on profiles, so a user can have many across different runs without their profile changing.
 
+### Evaluating a model
+
+Add your model to `MODELS` in `notebooks/model_evaluation.ipynb` and run it. Test users are fixed in `exports/user_splits.json`, so train only on `train`, tune only on `validation`, and treat `test` as one-time. Results go to `exports/evaluation_results.json`, and new models are logged in `exports/evaluation_log.csv`.
+
 ### Measuring a run
 
 ```python
@@ -172,8 +186,7 @@ ana = manager.add_profile({
     "job": "nurse",
     "interests": ["Hiking", " chess "],
     "clubs": ["Outdoors Club"],  # Can be empty.
-    "gender": "woman",  # Or "man".
-    "interested_in": "men",  # Or "women".
+    "gender": "woman",  # Or "man" or "nonbinary".
     "looking_for": "long-term",  # Or "short-term" or "just a date".
     "agent": True,  # True for a simulated user, False for a real person.
 })
@@ -188,11 +201,15 @@ ben = manager.add_profile({
     "interests": ["chess"],
     "clubs": [],
     "gender": "man",
-    "interested_in": "women",
     "looking_for": "just a date",
     "agent": True,
 })
 print(ana.interests)  # ['hiking', 'chess']
+
+# Private: who each person wants to be shown. Never part of a profile or a PublicView.
+manager.set_preferences(ana.user_id, ["man"])
+manager.set_preferences(ben.user_id, ["woman", "nonbinary"])
+print(manager.eligible_candidates(ana.user_id, "run-1"))  # [Ben's user_id]
 
 manager.edit_profile(ana.user_id, job="doctor")
 manager.add_persona(ana.user_id, "Values kindness over ambition.", {"kindness": 0.9})
@@ -225,7 +242,8 @@ Invalid data raises `pydantic.ValidationError`, and an unknown user raises `stor
 
 - **Re-rating:** a rating replaces an earlier one with the same rater, target, and run, including its transcript. If `raw_output` and `input_snapshot` aren't passed again, the old transcript is deleted.
 - **The `agent` flag:** matchers and raters aren't shown it. `PublicView` returns each profile as a `PublicProfile`, which doesn't have the field. Because matchers can't see it, they also can't avoid real people's profiles, so keep agents and real people in separate databases.
-- **`gender` and `interested_in`:** `RandomMatcher` ignores these, so it can show someone a profile outside their stated interest. `CompatibleRandomMatcher` only shows profiles where the interest goes both ways, and a real matcher can read both from `PublicView`.
+- **The eligible pool:** matchers must choose from `view.eligible_candidates(user_id)`. It contains only people with mutual gender interest and approved accounts, excluding the user themselves, anyone blocked in either direction, active matches, and anyone already rated in this run. In the live app, it also excludes anyone already shown. Simulated users have no account, and count as approved in simulations. If a matcher picks outside the pool, the simulation counts that step as a failure, and the app refuses the pick.
+- **Preferences are private:** they decide the pool but never appear in a profile or a `PublicView`. `CompatibleRandomMatcher` is now the same as `RandomMatcher`, and is kept so older runs can still be resumed and compared.
 - **Mutual pairs across runs:** with `run_id=None`, both scores must still come from the same run. A pair that qualifies in several runs appears once per run, and each result has a `run_id`.
 - **Seeded IDs:** IDs repeat only if the seed and the order of `add_profile` calls both match. A failed validation also uses up an ID, and running the same seed against an existing database raises `DuplicateProfileError`.
 - **Deleting across two files:** the two databases can't share a transaction. Hidden data is deleted first, so if a delete fails partway, calling it again finishes the job.
@@ -241,7 +259,7 @@ The 2,000 users are a seeded sample of 10,000 profiles made by `scripts/generate
 | Field | How it's generated |
 | --- | --- |
 | `user_id` | A UUID4 from the seeded generator, created by `add_profile` |
-| `gender` | `man` or `woman`, 50/50 |
+| `gender` | `man` or `woman`, 50/50. Profiles also accept `nonbinary`, which the generator doesn't use. |
 | `name` | One of 80 names for that gender, from `profile_lists.py` |
 | `age` | 18 to 24 |
 | `height_cm` | 150 to 200, for all genders |
@@ -251,7 +269,7 @@ The 2,000 users are a seeded sample of 10,000 profiles made by `scripts/generate
 | `job` | One of 8 student jobs |
 | `interests` | 1 to 3 from `hobbylist.csv`, which has 383 unique hobbies once lowercased |
 | `clubs` | 0 to 3 BU organizations from `bu_clubs.py`, leaving out men-only clubs for women and women-only clubs for men |
-| `interested_in` | The user's own gender 3% of the time (`GAY_RATE`), otherwise the opposite gender |
+| Preferences | The user's own gender 3% of the time (`GAY_RATE`), otherwise the opposite gender. These are stored privately, not on the profile. |
 | `looking_for` | `short-term`, `long-term`, or `just a date` |
 
 ### Personas
@@ -293,11 +311,91 @@ To rebuild the original 10,000 users, delete the root `main.db*` and `personas.d
 - **Low like rates:** written personas are picky. In the final check, the mean like probability was 0.31, and 60% of ratings were 0.3 or below.
 - **Unrealistic profiles:** most fields are independent and uniform, so they don't reflect BU's actual students. Height doesn't vary by gender, for example.
 - **Small same-gender pool:** only 50 of the 2,000 users are interested in their own gender.
-- **One gender of interest:** `interested_in` holds a single value, so the data has no users interested in both men and women.
+- **One gender of interest:** each synthetic user is interested in a single gender, so the data has no users interested in more than one, and no nonbinary users.
+
+## The live app
+
+A FastAPI JSON backend for the study. It handles magic-link sign-in with BU emails, an admin approval queue, profiles, photos, the feed, ratings, matches, chat, blocks, and reports. It has no web pages yet.
+
+### Running it locally
+
+```bash
+python scripts/seed_dev.py   # Optional: six fake approved accounts.
+EMAIL_SENDER=console COOKIE_SECURE=false ADMIN_EMAILS=you@bu.edu \
+    uvicorn --factory app.main:create_app --reload --no-access-log
+```
+
+Request a link with `POST /auth/request-link`, and the console prints it. Every POST, PUT, and DELETE must send an `Origin` header matching `SITE_URL`, as browsers do. With curl, add `-H "Origin: http://localhost:8000"`. Run the tests with `pytest`, which includes `tests/test_api.py`.
+
+**Run it as one process.** Rate limits, the matcher registry, and matcher state live in memory, so several workers would each have their own copy. SQLite in WAL mode handles one process's concurrent requests.
+
+### Environment variables
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `SITE_URL` | `http://localhost:8000` | The site's address. Used in sign-in links and the CSRF check. |
+| `ALLOWED_EMAIL_DOMAINS` | `bu.edu` | Comma-separated. The domain must match exactly, so subdomains aren't allowed. |
+| `ADMIN_EMAILS` | (none) | Comma-separated. These become admins, approved on their first sign-in. |
+| `APP_MAIN_DB` | `data/live/main.db` | The live database, kept apart from the simulated users. |
+| `APP_PERSONA_DB` | `data/live/personas.db` | Required by `ProfileManager`. Live users have no personas. |
+| `PHOTO_DIR` | `data/live/photos` | Photo storage. Never serve this folder publicly. |
+| `CONSENT_DIR` | `consent` | Folder of consent texts, named `v<version>.md`. |
+| `CONSENT_VERSION` | `1` | The version users must agree to. Raising it asks everyone to agree again. |
+| `REQUIRE_PHOTO` | `true` | Whether approval needs at least one photo. |
+| `MATCH_THRESHOLD` | `7.0` | Both people must rate each other at least this, on the 1 to 10 scale, to match. |
+| `COOKIE_SECURE` | `true` | Only send the session cookie over HTTPS. Set `false` for local http. |
+| `SESSION_DAYS` | `14` | How long a session lasts. |
+| `LOGIN_TOKEN_MINUTES` | `15` | How long a sign-in link works. |
+| `ENABLED_MATCHERS` | `random` | Comma-separated names from `app/matchers.py`. Each feed request picks one at random. |
+| `MATCHER_SEED` | (random) | Seeds that choice, for reproducible tests. |
+| `EMAIL_SENDER` | `console` | `console` prints links, which is for development only. `smtp` sends real email. |
+| `SMTP_HOST`, `SMTP_PORT` | (none), `587` | The SMTP server. |
+| `SMTP_USERNAME`, `SMTP_PASSWORD` | (none) | SMTP sign-in, if needed. |
+| `SMTP_FROM` | (none) | The sender address. |
+| `SMTP_STARTTLS` | `true` | Use STARTTLS. |
+
+### Endpoints
+
+| Area | Endpoints | Who can call them |
+| --- | --- | --- |
+| Sign-in | `POST /auth/request-link`, `GET /auth/verify`, `GET` and `POST /auth/consent`, `POST /auth/logout` | Anyone, then signed in |
+| Your account | `GET /me`, `DELETE /me` | Signed in. Deleting never needs consent or approval. |
+| Your data | `POST`, `GET`, and `PUT /me/profile`, `GET` and `PUT /me/preferences`, `POST /me/photos`, `DELETE /me/photos/{id}`, `PUT /me/photos` (reorder) | Signed in, with consent. Approval isn't needed. |
+| Photos | `GET /photos/{id}` | The owner, admins, and approved users who may see the owner |
+| Feed and ratings | `GET /feed/next`, `POST /ratings` | Approved, with a profile |
+| Matches and chat | `GET /matches`, `POST /matches/{id}/unmatch`, `GET` and `POST /matches/{id}/messages` | Approved participants of an active match with no block |
+| Safety | `POST`, `GET`, and `DELETE /blocks`, `POST /reports` | Approved |
+| Admin | `GET /admin/accounts`, `POST /admin/accounts/{id}/approve`, `reject`, or `suspend`, `GET /admin/reports`, `POST /admin/reports/{id}/resolve`, `GET /admin/reports/{id}/messages` | Admins. Every action is written to `audit_log`. |
+
+### Ratings in the app
+
+People rate from 1 to 10. Ratings are stored on the same 0 to 1 scale as Jev's, as (score - 1) / 9, with `run_id` set to `live`. The impression decides the target and the matcher, so a client can never choose who it rates or which matcher gets credit. A match is made when both have rated each other at or above `MATCH_THRESHOLD`, unless either has blocked the other. The reply to a rating has the same shape whether or not the other person has rated you, unless a match was made.
+
+### Privacy design
+
+| Who | Can see |
+| --- | --- |
+| **Anyone** | Nothing except the consent text. Requesting a link gives the same reply for any address. |
+| **A signed-in user** | Their own email, profile, preferences, photos, and approval status, through `/me`. |
+| **Other approved users** | Your public profile and photos, but only once you're in their pool, have been shown to them, or have matched with them, and never if either of you has blocked the other. They never see your email, preferences, ratings, or whether you rated them, unless you match. |
+| **Your match** | Messages in your match, while it's active and neither of you has blocked the other. |
+| **Admins** | Emails, profiles, and photos in the approval queue, and reports. They can read a match's messages only through a report about it, and each read is logged. |
+| **Matchers** | Public profiles, this run's ratings, and the eligible pool's user IDs. Never preferences, emails, or personas. |
+
+- **Email:** stored only in `accounts`, never on profiles.
+- **Sign-in:** login tokens and session ids are stored only as SHA-256 hashes. A link works once and expires after 15 minutes. The access log is off in the command above, and a filter removes tokens from server logs.
+- **Cookies:** `HttpOnly` and `SameSite=Lax`, and `Secure` unless turned off for local http.
+- **CSRF:** state-changing requests must have an `Origin` header, or else a `Referer`, matching `SITE_URL`. Requests with neither are refused. I chose this over CSRF tokens because it needs no extra state, and every current browser sends `Origin` on these requests.
+- **Security headers:** every response gets `nosniff`, `X-Frame-Options: DENY`, a restrictive `Content-Security-Policy`, and `Cache-Control: no-store`. Photos are served with `Cache-Control: private` instead.
+- **Photos:** each upload is decoded by Pillow and re-encoded as a new JPEG. That rejects anything that isn't a real image and removes EXIF data such as GPS location. Photos are stored under random names, at most 1,600 pixels on the long side, with at most 5 photos of 5 MB each. Anyone not allowed to see a photo gets 404, so its existence isn't revealed.
+- **Deleting an account:** this removes the profile, preferences, photos and their files, ratings, impressions, matches and their messages, blocks, reports the user filed, sessions, and sign-in links. Reports about the user are kept as safety records, with the user removed. Audit rows are kept, with the user's ids replaced by `[deleted]`.
+- **Real people and agents stay apart:** the app uses its own database (`data/live/`), so simulated users never appear in real people's feeds.
 
 ## Changing the schema
 
-There are no migrations. Tables are only created if they're missing, so after changing a table, delete the `.db` files, along with their `-wal` and `-shm` files, and re-import your data.
+Tables are only created if they're missing, so after changing a table, delete the `.db` files, along with their `-wal` and `-shm` files, and re-import your data.
+
+One migration exists: `scripts/migrate_preferences.py` upgrades databases made before preferences moved off profiles, keeping every rating. It backs up each database first. `Store` refuses to open an old database and names the command to run.
 
 To add a field to profiles or ratings:
 

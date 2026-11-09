@@ -37,7 +37,6 @@ def profile_data(**overrides: Any) -> dict[str, Any]:
         "interests": ["hiking"],
         "clubs": ["chess club"],
         "gender": "man",
-        "interested_in": "women",
         "looking_for": "long-term",
         "agent": True,
     }
@@ -121,7 +120,6 @@ def test_add_profile_rejects_invalid_supplied_id(
         "interests",
         "clubs",
         "gender",
-        "interested_in",
         "looking_for",
         "agent",
     ],
@@ -163,10 +161,8 @@ def test_add_profile_rejects_missing_field(
         {"gender": "men"},
         {"gender": "Man"},
         {"gender": None},
-        {"interested_in": "man"},
-        {"interested_in": "Women"},
-        {"interested_in": ["men", "women"]},
-        {"interested_in": None},
+        {"gender": "everyone"},
+        {"interested_in": ["woman"]},  # Private, so never part of a profile.
         {"looking_for": "marriage"},
         {"looking_for": "Long-Term"},
         {"looking_for": ""},
@@ -220,16 +216,88 @@ def test_major_round_trips(manager: ProfileManager) -> None:
     assert manager.get_profile(profile.user_id).major == "Computer Science"
 
 
+@pytest.mark.parametrize("gender", ["man", "woman", "nonbinary"])
+def test_gender_round_trips(manager: ProfileManager, gender: str) -> None:
+    profile = manager.add_profile(profile_data(gender=gender))
+    assert manager.get_profile(profile.user_id).gender == gender
+
+
+# Preferences
+
+
 @pytest.mark.parametrize(
-    ("gender", "interested_in"),
-    [("man", "men"), ("man", "women"), ("woman", "men"), ("woman", "women")],
+    "interested_in",
+    [["man"], ["woman", "nonbinary"], ["man", "woman", "nonbinary"], ("woman", "woman")],
 )
-def test_gender_and_interested_in_round_trip(
-    manager: ProfileManager, gender: str, interested_in: str
+def test_preferences_round_trip(manager: ProfileManager, interested_in: Any) -> None:
+    user = add_users(manager, 1)[0]
+    manager.set_preferences(user, interested_in)
+    assert manager.get_preferences(user).interested_in == frozenset(interested_in)
+
+
+@pytest.mark.parametrize("interested_in", [[], ["men"], ["everyone"], [None]])
+def test_invalid_preferences_are_rejected(manager: ProfileManager, interested_in: Any) -> None:
+    user = add_users(manager, 1)[0]
+    with pytest.raises(ValidationError):
+        manager.set_preferences(user, interested_in)
+    assert manager.get_preferences(user) is None
+
+
+def test_preferences_replace_and_need_a_profile(manager: ProfileManager) -> None:
+    user = add_users(manager, 1)[0]
+    manager.set_preferences(user, ["man", "woman"])
+    manager.set_preferences(user, ["nonbinary"])
+    assert manager.get_preferences(user).interested_in == {"nonbinary"}
+    with pytest.raises(ProfileNotFoundError):
+        manager.set_preferences(str(uuid.uuid4()), ["man"])
+
+
+def test_preferences_are_never_part_of_a_profile_or_export(
+    manager: ProfileManager, tmp_path: Path
 ) -> None:
-    profile = manager.add_profile(profile_data(gender=gender, interested_in=interested_in))
-    stored = manager.get_profile(profile.user_id)
-    assert (stored.gender, stored.interested_in) == (gender, interested_in)
+    user = add_users(manager, 1)[0]
+    manager.set_preferences(user, ["nonbinary"])
+    assert "interested_in" not in manager.get_profile(user).model_dump()
+    manager.store.export_profiles_json(tmp_path / "profiles.json")
+    exported = (tmp_path / "profiles.json").read_text()
+    assert "interested_in" not in exported
+    assert "nonbinary" not in exported
+
+
+def test_deleting_a_profile_deletes_its_preferences(manager: ProfileManager) -> None:
+    user = add_users(manager, 1)[0]
+    manager.set_preferences(user, ["man"])
+    manager.delete_profile(user)
+    assert manager.get_preferences(user) is None
+    assert manager.store.all_preferences() == {}
+
+
+def test_eligible_pool_needs_mutual_interest_and_excludes_self_and_rated(
+    manager: ProfileManager,
+) -> None:
+    me, man, woman, nonbinary = (
+        manager.add_profile(profile_data(gender=g)).user_id
+        for g in ("woman", "man", "woman", "nonbinary")
+    )
+    manager.set_preferences(me, ["man", "nonbinary"])
+    manager.set_preferences(man, ["woman"])
+    manager.set_preferences(woman, ["man", "woman", "nonbinary"])
+    manager.set_preferences(nonbinary, ["man"])  # Not interested in women.
+
+    assert manager.eligible_candidates(me, RUN) == [man]
+    assert woman not in manager.eligible_candidates(me, RUN)
+    assert me not in manager.eligible_candidates(me, RUN)
+
+    manager.add_rating(me, man, 0.5, RUN)
+    assert manager.eligible_candidates(me, RUN) == []
+    assert manager.eligible_candidates(me, "other-run") == [man]
+
+
+def test_users_without_preferences_are_in_nobodys_pool(manager: ProfileManager) -> None:
+    me, other = add_users(manager, 2)
+    manager.set_preferences(me, ["man"])
+    assert manager.eligible_candidates(me, RUN) == []
+    assert manager.eligible_candidates(other, RUN) == []
 
 
 @pytest.mark.parametrize("agent", [True, False])
@@ -298,7 +366,7 @@ def test_edit_profile_applies_and_persists(manager: ProfileManager) -> None:
         {"major": "   "},
         {"clubs": ["  "]},
         {"gender": "men"},
-        {"interested_in": "man"},
+        {"interested_in": ["man"]},
         {"looking_for": "marriage"},
         {"nickname": "unknown field"},
     ],
@@ -495,7 +563,7 @@ def test_database_constraints_reject_bad_rows(
     for user_id in ("a", "b"):
         conn.execute(
             "INSERT INTO profiles VALUES "
-            "(?, 'n', 30, 170, 'r', 's', 'm', 'j', '[]', '[]', 'man', 'women', 'long-term', 1)",
+            "(?, 'n', 30, 170, 'r', 's', 'm', 'j', '[]', '[]', 'man', 'long-term', 1)",
             (user_id,),
         )
     with pytest.raises(sqlite3.IntegrityError):
@@ -796,8 +864,7 @@ def test_concurrent_edits_to_different_fields_are_not_lost(
         {"agent": False},
         {"major": "new major"},
         {"clubs": ["new club"]},
-        {"gender": "woman"},
-        {"interested_in": "men"},
+        {"gender": "nonbinary"},
     ]
 
     with ThreadPoolExecutor(max_workers=len(edits)) as pool:

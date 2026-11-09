@@ -97,7 +97,10 @@ def write_persona(
 def copy_sampled_users(
     source: ProfileManager, manager: ProfileManager, n_users: int = N_USERS, seed: int = SEED
 ) -> int:
-    """Copy a random sample of profiles, keeping their IDs. Does nothing if users already exist."""
+    """Copy a random sample of profiles and preferences, keeping their IDs.
+
+    Does nothing if users already exist.
+    """
     if manager.count_profiles() > 0:
         return 0
     profiles = source.list_profiles()
@@ -105,6 +108,9 @@ def copy_sampled_users(
         raise ValueError(f"need {n_users} source profiles, found {len(profiles)}")
     for profile in random.Random(seed).sample(profiles, n_users):
         manager.add_profile(profile.model_dump())
+        preferences = source.get_preferences(profile.user_id)
+        if preferences is not None:
+            manager.set_preferences(profile.user_id, preferences.interested_in)
     return n_users
 
 

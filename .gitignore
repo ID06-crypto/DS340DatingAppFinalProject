@@ -18,3 +18,6 @@ notebooks/written_personas_sample.json
 # Backups and run logs
 backups/
 data/*.log
+
+# The live app: real people's data and photos
+data/live/

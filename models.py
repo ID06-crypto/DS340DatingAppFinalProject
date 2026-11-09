@@ -1,4 +1,4 @@
-"""Pydantic models for profiles, ratings, and simulated-user personas."""
+"""Pydantic models for profiles, preferences, ratings, and simulated-user personas."""
 
 import random
 import uuid
@@ -29,6 +29,12 @@ def _to_utc(value: datetime) -> datetime:
 
 UtcDatetime = Annotated[AwareDatetime, AfterValidator(_to_utc)]
 
+Gender = Literal["man", "woman", "nonbinary"]
+GENDERS: tuple[Gender, ...] = ("man", "woman", "nonbinary")
+
+# Ratings made by real people in the app. Simulation runs use any other run_id.
+LIVE_RUN_ID = "live"
+
 
 def generate_user_id(rng: random.Random | None = None) -> str:
     """Return a random UUID4 string, reproducible if given a seeded random.Random."""
@@ -56,8 +62,7 @@ class PublicProfile(BaseModel):
     job: NonEmptyStr
     interests: list[str] = Field(min_length=1)
     clubs: list[str]  # Required, but can be empty for someone in no clubs.
-    gender: Literal["man", "woman"]
-    interested_in: Literal["men", "women"]
+    gender: Gender
     looking_for: Literal["short-term", "long-term", "just a date"]
 
     @field_validator("user_id")
@@ -94,6 +99,26 @@ class Profile(PublicProfile):
     agent: bool = Field(strict=True)  # True for a simulated user, False for a real person.
 
 
+class Preferences(BaseModel):
+    """PRIVATE: which genders a user wants to be shown. Only the user may see this.
+
+    It's never part of a profile, a PublicView, or any other user's response. It only
+    decides who appears in someone's eligible pool. "Everyone" is stored as all genders.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    user_id: NonEmptyStr
+    interested_in: frozenset[Gender] = Field(min_length=1)
+
+
+def mutually_interested(
+    gender_a: str, interested_a: frozenset[str], gender_b: str, interested_b: frozenset[str]
+) -> bool:
+    """Whether each person is a gender the other wants to be shown."""
+    return gender_b in interested_a and gender_a in interested_b
+
+
 class Rating(BaseModel):
     """One user's score of another within a run. This is public data, kept in main.db.
 
@@ -110,6 +135,7 @@ class Rating(BaseModel):
     timestamp: UtcDatetime = Field(default_factory=_utc_now)
     model_version: str | None = None
     step: int | None = Field(default=None, ge=1, strict=True)
+    matcher: str | None = None  # The matcher that served this profile.
 
     @model_validator(mode="after")
     def reject_self_rating(self) -> Self:
