@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Blocked people{% endblock %}
+{% block content %}
+<h1>Blocked people</h1>
+{% if blocked %}
+<ul>
+  {% for b in blocked %}
+  <li>{{ b.name }}
+    <form method="post" action="/me/blocked/{{ b.user_id }}/unblock">{% include "partials/csrf.html" %}<button type="submit" aria-label="Unblock {{ b.name }}">Unblock</button></form>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p>You haven't blocked anyone.</p>
+{% endif %}
+<p><a href="/me">Back to Me</a></p>
+{% endblock %}

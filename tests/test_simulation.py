@@ -20,7 +20,8 @@ from matching import (
     PublicView,
     RandomMatcher,
 )
-from metrics import compute_metrics, learning_curve
+from metrics import learning_curve
+from run_metrics import compute_metrics
 from models import Persona, Profile, Rating, generate_user_id, mutually_interested
 from personas import PersonaStore
 from raters import (

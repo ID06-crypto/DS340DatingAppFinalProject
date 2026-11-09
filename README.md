@@ -12,14 +12,15 @@ It also includes a JSON backend for the live study with about 100 invited BU stu
 | `app/` | The FastAPI backend for the live app |
 | `consent/v1.md` | The consent text users agree to, by version |
 | `scripts/seed_dev.py` | Creates a few fake approved accounts for local testing |
-| `scripts/migrate_preferences.py` | Upgrades databases made before preferences moved off profiles |
+| `scripts/migrate_schema.py` | Upgrades databases made before preferences moved off profiles |
 | `personas.py` | Hidden data, in `personas.db`: personas and rating transcripts |
 | `db.py` | Connection and WAL helpers shared by both stores |
 | `manager.py` | `ProfileManager`, the storage interface for the rest of the project |
 | `matching.py` | `Matcher` interface, `PublicView`, `RandomMatcher`, `CompatibleRandomMatcher` |
 | `raters.py` | `Rater` interface, `build_rater_input`, `FakeRater`, `JevRater` |
 | `simulation.py` | `run_simulation` and `RunSummary` |
-| `metrics.py` | `compute_metrics`: match rate, compatibility, and the learning curve for a run |
+| `metrics.py` | Pure metric functions for comparing matchers: classification, AUC, precision at k, cluster bootstrap, group suppression |
+| `run_metrics.py` | `compute_metrics`: match rate, compatibility, and the learning curve for a simulation run |
 | `scripts/run_baseline.py` | An end-to-end run on fake users |
 | `scripts/run_trial.py` | Tries a rater on a small sample of the real users and reports speed and scores |
 | `scripts/run_experiment.py` | Runs a long Jev baseline in parallel, with resuming and backups |
@@ -106,7 +107,12 @@ class MyMatcher(Matcher):
 
     def observe(self, rating: Rating) -> None:
         ...  # Optional. Called after every saved rating.
+
+    def score_candidates(self, user_id: str, view: PublicView, candidates: list[str]) -> dict[str, float] | None:
+        ...  # Optional. A 0 to 1 chance of a positive rating for each candidate, or None.
 ```
+
+Also give it a `description` in plain language, which users see on the transparency page. In the app, scores from `score_candidates` are logged with each impression (`predicted_score`, and the whole pool in `impression_candidates`), so the comparison page can show precision, recall, F1, and AUC. Register it in `app/matchers.py` to use it in the app.
 
 ### Rating with Jev
 
@@ -150,7 +156,7 @@ Add your model to `MODELS` in `notebooks/model_evaluation.ipynb` and run it. Tes
 ### Measuring a run
 
 ```python
-from metrics import compute_metrics
+from run_metrics import compute_metrics
 
 print(compute_metrics(manager.store, "baseline-1"))
 ```
@@ -315,17 +321,59 @@ To rebuild the original 10,000 users, delete the root `main.db*` and `personas.d
 
 ## The live app
 
-A FastAPI JSON backend for the study. It handles magic-link sign-in with BU emails, an admin approval queue, profiles, photos, the feed, ratings, matches, chat, blocks, and reports. It has no web pages yet.
+A FastAPI app for the study, with server-rendered pages and a JSON API that share the same rules in `app/actions.py`. It handles magic-link sign-in with BU emails, onboarding and an admin approval queue, Discover (one person at a time), matches and chat, blocks and reports, account settings, and admin analytics.
+
+### Design rules
+
+This is a free student research project, built as a response to engagement-driven recommendation systems. These rules stay true:
+
+- No streaks, no "someone liked you" teasers, no badge counts, and no infinite scroll.
+- No online, typing, or read indicators.
+- No re-engagement or reminder emails. The only emails are sign-in links and one "new match" email.
+- No skip button. Reloading Discover shows the same person again.
+- No ads, no tracking scripts, and nothing loaded from other sites. HTMX, Pico.css, and Chart.js are copied into `static/vendor/`, at pinned versions checked against npm's published checksums.
+- One person at a time, with a calm end state when nobody's left, and no prompts to come back.
 
 ### Running it locally
 
 ```bash
-python scripts/seed_dev.py   # Optional: six fake approved accounts.
-EMAIL_SENDER=console COOKIE_SECURE=false ADMIN_EMAILS=you@bu.edu \
+python scripts/seed_dev.py   # Optional: 40 fake approved users, with some matches.
+EMAIL_SENDER=console COOKIE_SECURE=false ADMIN_EMAILS=you@bu.edu EXPORT_SALT=dev-salt \
     uvicorn --factory app.main:create_app --reload --no-access-log
 ```
 
-Request a link with `POST /auth/request-link`, and the console prints it. Every POST, PUT, and DELETE must send an `Origin` header matching `SITE_URL`, as browsers do. With curl, add `-H "Origin: http://localhost:8000"`. Run the tests with `pytest`, which includes `tests/test_api.py`.
+Open http://localhost:8000 in a browser, enter an email (`dev.user01@bu.edu` for a seeded user, or your admin email), and open the sign-in link the terminal prints. Run the tests with `pytest`.
+
+**Pages and the API share URLs.** A browser asking for HTML, or an HTMX request, gets the page at `/me`, `/matches`, `/admin`, and so on. Any other request gets the JSON API at the same URL, unchanged. Internally the pages live under `/ui`. API clients must send an `Origin` header matching `SITE_URL` with every POST, PUT, and DELETE. With curl, add `-H "Origin: http://localhost:8000"`.
+
+### Pages
+
+| Area | What's there |
+| --- | --- |
+| Public | `/`, which explains the project and takes an email, and `/transparency`, which covers what's collected, who sees what, the algorithms, and these rules |
+| Onboarding, in order | Consent, profile, who you'd like to meet, photos, then "under review" until an admin approves you |
+| Discover | One profile at a time, with a 1 to 10 slider and number box and no default value. Shows how many people are left. Report and block are in a menu. |
+| Matches | Each match's first name, photo, and last message time. Chat polls every 5 seconds only while it's open. Unmatch, block, and report are in a menu. |
+| Me | Edit your profile, photos, and preferences, see who you've blocked, set match emails, opt out of the experiment, pause, download your data, or delete your account |
+| Admin | Overview, approvals, reports, algorithm comparison, controls, audit log, and export. Each needs a sign-in from the last `ADMIN_STEP_UP_MINUTES`. |
+
+**Surveys:** "Was this worth your time?" from 1 to 5 appears on Discover when nobody's left, and otherwise after every 25th rating, at most once a day. "Was this match worth your time?" appears once per match, in its chat, once the match is 3 days old. Both can be dismissed.
+
+**Opting out:** users who opt out always get `DEFAULT_MATCHER`, and their data is left out of all analytics and exports. **Pausing** hides a user from everyone's pool without deleting anything.
+
+### Analytics
+
+The admin comparison page computes everything with the pure functions in `metrics.py`, over rated impressions where neither person opted out.
+
+- **Positive rating:** `POSITIVE_THRESHOLD` (7.0) or above, on the 1 to 10 scale. This is separate from `MATCH_THRESHOLD`.
+- **Positive prediction:** `PREDICTION_THRESHOLD` (0.5) or above. Matchers predict on a 0 to 1 scale. Matchers without predictions show "n/a (no predictions)" for classification metrics.
+- **Confidence intervals:** 95% bootstrap intervals that resample users, because one person's ratings are correlated. Every number shows n users and n ratings.
+- **Groups:** results by age band (18-20, 21-23, 24+) and gender hide any group with fewer than `MIN_GROUP_SIZE` users. When exactly one group is hidden, the next smallest is too, so it can't be worked out from the total.
+- **Rapid ratings:** ratings made in under `RAPID_RATING_MS` are flagged, not removed.
+- **Surveys:** a matcher is chosen for each impression, so survey answers are credited to the matcher that served the person's last impression before answering.
+- **Selection bias:** a matcher that chooses who to show is evaluated on the people it chose, so its classification metrics aren't comparable with the random matcher's. The random matcher's data is the unbiased sample for offline evaluation.
+
+The export (`/admin/export.csv` and `.json`) has one row per impression. People appear as salted hashes using `EXPORT_SALT`, with age bands and gender. It has no emails, names, free text, photos, religion, or exact ages. Each export is audited with its row count.
 
 **Run it as one process.** Rate limits, the matcher registry, and matcher state live in memory, so several workers would each have their own copy. SQLite in WAL mode handles one process's concurrent requests.
 
@@ -346,7 +394,15 @@ Request a link with `POST /auth/request-link`, and the console prints it. Every 
 | `COOKIE_SECURE` | `true` | Only send the session cookie over HTTPS. Set `false` for local http. |
 | `SESSION_DAYS` | `14` | How long a session lasts. |
 | `LOGIN_TOKEN_MINUTES` | `15` | How long a sign-in link works. |
-| `ENABLED_MATCHERS` | `random` | Comma-separated names from `app/matchers.py`. Each feed request picks one at random. |
+| `ENABLED_MATCHERS` | `random` | Comma-separated names from `app/matchers.py`, switched on when the database is new. After that, admins set them and their weights on the controls page. |
+| `DEFAULT_MATCHER` | `random` | Serves users who opt out of the experiment. |
+| `POSITIVE_THRESHOLD` | `7.0` | A rating at or above this counts as positive in analytics (1 to 10). |
+| `PREDICTION_THRESHOLD` | `0.5` | A prediction at or above this counts as positive (0 to 1). |
+| `MIN_GROUP_SIZE` | `10` | Analytics groups with fewer users than this are suppressed. |
+| `RAPID_RATING_MS` | `800` | Ratings faster than this are flagged in analytics. |
+| `ADMIN_STEP_UP_MINUTES` | `60` | Admins must have signed in within this many minutes. |
+| `EXPORT_SALT` | (none) | Required for exports. Keep it secret and fixed, so pseudonyms stay stable. |
+| `SOURCE_REPO_URL` | (none) | Optional link to the source code on the transparency page. |
 | `MATCHER_SEED` | (random) | Seeds that choice, for reproducible tests. |
 | `EMAIL_SENDER` | `console` | `console` prints links, which is for development only. `smtp` sends real email. |
 | `SMTP_HOST`, `SMTP_PORT` | (none), `587` | The SMTP server. |
@@ -385,8 +441,9 @@ People rate from 1 to 10. Ratings are stored on the same 0 to 1 scale as Jev's, 
 - **Email:** stored only in `accounts`, never on profiles.
 - **Sign-in:** login tokens and session ids are stored only as SHA-256 hashes. A link works once and expires after 15 minutes. The access log is off in the command above, and a filter removes tokens from server logs.
 - **Cookies:** `HttpOnly` and `SameSite=Lax`, and `Secure` unless turned off for local http.
-- **CSRF:** state-changing requests must have an `Origin` header, or else a `Referer`, matching `SITE_URL`. Requests with neither are refused. I chose this over CSRF tokens because it needs no extra state, and every current browser sends `Origin` on these requests.
-- **Security headers:** every response gets `nosniff`, `X-Frame-Options: DENY`, a restrictive `Content-Security-Policy`, and `Cache-Control: no-store`. Photos are served with `Cache-Control: private` instead.
+- **CSRF:** API requests that change anything must have an `Origin`, or else a `Referer`, matching `SITE_URL`. Every page form and HTMX request also carries a per-session CSRF token, derived from the session id, so nothing extra is stored. Pages send `Referrer-Policy: no-referrer`, which makes browsers send `Origin: null` on ordinary form posts. Those are accepted only with a valid token, and a foreign `Origin` is always refused.
+- **Security headers:** every response gets `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, and a strict `Content-Security-Policy` that allows only this site's own files, with no inline scripts or styles. Pages and API responses get `Cache-Control: no-store`. Photos get `Cache-Control: private`, and static files can be cached.
+- **Errors:** pages show friendly 403, 404, and 500 pages without internal details. Validation errors never repeat the values that were sent.
 - **Photos:** each upload is decoded by Pillow and re-encoded as a new JPEG. That rejects anything that isn't a real image and removes EXIF data such as GPS location. Photos are stored under random names, at most 1,600 pixels on the long side, with at most 5 photos of 5 MB each. Anyone not allowed to see a photo gets 404, so its existence isn't revealed.
 - **Deleting an account:** this removes the profile, preferences, photos and their files, ratings, impressions, matches and their messages, blocks, reports the user filed, sessions, and sign-in links. Reports about the user are kept as safety records, with the user removed. Audit rows are kept, with the user's ids replaced by `[deleted]`.
 - **Real people and agents stay apart:** the app uses its own database (`data/live/`), so simulated users never appear in real people's feeds.
@@ -395,7 +452,7 @@ People rate from 1 to 10. Ratings are stored on the same 0 to 1 scale as Jev's, 
 
 Tables are only created if they're missing, so after changing a table, delete the `.db` files, along with their `-wal` and `-shm` files, and re-import your data.
 
-One migration exists: `scripts/migrate_preferences.py` upgrades databases made before preferences moved off profiles, keeping every rating. It backs up each database first. `Store` refuses to open an old database and names the command to run.
+One migration exists: `scripts/migrate_schema.py` upgrades databases made before preferences moved off profiles, keeping every rating. It backs up each database first. `Store` refuses to open an old database and names the command to run.
 
 To add a field to profiles or ratings:
 

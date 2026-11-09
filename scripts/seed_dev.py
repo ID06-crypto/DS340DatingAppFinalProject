@@ -1,9 +1,11 @@
-"""Create a few fake, approved accounts for trying the app locally. Never run this in production.
+"""Fill the live app with about 40 fake, approved users for trying it locally. Never run in production.
 
     python scripts/seed_dev.py
 
-It uses the same settings as the server (APP_MAIN_DB, PHOTO_DIR, and so on). Sign in as any
-of the printed emails: request a link, and the console email sender prints it.
+It uses the same settings as the server (APP_MAIN_DB, PHOTO_DIR, and so on), and does
+nothing if the fake users already exist. Some users have no religion, and a few pairs have
+matched and messaged, so every page has something to show. Sign in as any printed email:
+request a link, and the console email sender prints it.
 """
 
 import io
@@ -14,28 +16,30 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from PIL import Image  # noqa: E402
+from PIL import Image, ImageDraw  # noqa: E402
 
 from app.config import Settings  # noqa: E402
-from app.photos import LocalDiskPhotoStorage, clean_photo, new_storage_key  # noqa: E402
-from app.photos import MAX_PHOTOS  # noqa: E402
+from app.photos import MAX_PHOTOS, LocalDiskPhotoStorage, clean_photo, new_storage_key  # noqa: E402
 from live_store import LiveStore  # noqa: E402
 from manager import ProfileManager  # noqa: E402
+from models import LIVE_RUN_ID  # noqa: E402
 
-PEOPLE = [
-    # (email, name, gender, interested_in, looking_for, major, color)
-    ("dev.alex@bu.edu", "Alex", "man", ["woman"], "long-term", "economics", "steelblue"),
-    ("dev.blake@bu.edu", "Blake", "woman", ["man"], "short-term", "biology", "indianred"),
-    ("dev.casey@bu.edu", "Casey", "nonbinary", ["man", "woman", "nonbinary"], "just a date", "art history", "seagreen"),
-    ("dev.drew@bu.edu", "Drew", "woman", ["man", "nonbinary"], "long-term", "computer science", "goldenrod"),
-    ("dev.emery@bu.edu", "Emery", "man", ["woman", "nonbinary"], "short-term", "history", "slateblue"),
-    ("dev.finley@bu.edu", "Finley", "woman", ["woman"], "long-term", "psychology", "darkorange"),
-]
+N_USERS = 40
+SEED = 0
+FIRST_NAMES = ["Alex", "Blake", "Casey", "Drew", "Emery", "Finley", "Gray", "Harper", "Indy", "Jordan",
+               "Kai", "Logan", "Morgan", "Noor", "Oakley", "Parker", "Quinn", "Riley", "Sage", "Taylor"]
+LAST_NAMES = ["Kim", "Patel", "Garcia", "Okafor", "Nguyen", "Smith", "Cohen", "Silva", "Ali", "Brown"]
+MAJORS = ["biology", "economics", "computer science", "history", "psychology", "art history", "physics"]
+INTERESTS = ["hiking", "chess", "cooking", "film", "running", "music", "climbing", "board games", "poetry"]
+RELIGIONS = ["catholic", "jewish", "muslim", "hindu", "buddhist", "atheist", "agnostic"]
+COLORS = ["steelblue", "indianred", "seagreen", "goldenrod", "slateblue", "darkorange", "teal", "sienna"]
 
 
-def placeholder_photo(color: str) -> bytes:
+def placeholder_photo(color: str, label: str) -> bytes:
+    image = Image.new("RGB", (600, 800), color)
+    ImageDraw.Draw(image).text((40, 40), label, fill="white")
     output = io.BytesIO()
-    Image.new("RGB", (600, 800), color).save(output, "JPEG")
+    image.save(output, "JPEG")
     return clean_photo(output.getvalue())
 
 
@@ -45,38 +49,85 @@ def main() -> None:
     manager = ProfileManager(settings.main_db, settings.persona_db)
     live = LiveStore(settings.main_db)
     storage = LocalDiskPhotoStorage(settings.photo_dir)
-    rng = random.Random(0)
+    rng = random.Random(SEED)
 
-    for email, name, gender, interested_in, looking_for, major, color in PEOPLE:
-        account, created = live.get_or_create_account(email, admin=False)
-        if not created and account.user_id is not None:
-            print(f"{email}: already exists")
-            continue
+    if live.account_for_email("dev.user01@bu.edu") is not None:
+        print("Fake users already exist. Delete the database to start over.")
+        return
+
+    users = []
+    for i in range(1, N_USERS + 1):
+        gender = rng.choices(["man", "woman", "nonbinary"], weights=[45, 45, 10])[0]
+        interested_in = {
+            "man": rng.choices([["woman"], ["man"], ["woman", "nonbinary"]], weights=[80, 10, 10])[0],
+            "woman": rng.choices([["man"], ["woman"], ["man", "nonbinary"]], weights=[80, 10, 10])[0],
+            "nonbinary": ["man", "woman", "nonbinary"],
+        }[gender]
+        email = f"dev.user{i:02d}@bu.edu"
+        account, _ = live.get_or_create_account(email, admin=False)
         profile = manager.add_profile({
-            "name": name,
+            "name": f"{rng.choice(FIRST_NAMES)} {rng.choice(LAST_NAMES)}",
             "age": rng.randint(18, 24),
-            "height_cm": rng.randint(155, 195),
-            "religion": rng.choice(["none", "catholic", "jewish", "muslim", "hindu"]),
+            "height_cm": rng.randint(152, 195),
+            "religion": None if rng.random() < 0.3 else rng.choice(RELIGIONS),  # Some leave it blank.
             "school": "BU",
-            "major": major,
-            "job": "student",
-            "interests": rng.sample(["hiking", "chess", "cooking", "film", "running", "music"], 2),
+            "major": rng.choice(MAJORS),
+            "job": rng.choice(["student", "tutor", "barista", "research assistant"]),
+            "interests": rng.sample(INTERESTS, rng.randint(1, 3)),
             "clubs": [],
             "gender": gender,
-            "looking_for": looking_for,
+            "looking_for": rng.choice(["long-term", "short-term", "just a date"]),
             "agent": False,
         })
         live.link_profile(account.account_id, profile.user_id)
         manager.set_preferences(profile.user_id, interested_in)
         live.record_consent(account.account_id, settings.consent_version)
-        key = new_storage_key()
-        storage.save(key, placeholder_photo(color))
-        live.add_photo(profile.user_id, key, MAX_PHOTOS)
+        for n in range(rng.randint(1, 3)):
+            key = new_storage_key()
+            storage.save(key, placeholder_photo(rng.choice(COLORS), f"{profile.name.split()[0]}, photo {n + 1}"))
+            live.add_photo(profile.user_id, key, MAX_PHOTOS)
         live.set_status(account.account_id, "approved", "seed_dev")
-        print(f"{email}: approved ({gender}, interested in {', '.join(interested_in)})")
+        users.append((email, profile.user_id))
 
-    print(f"\nDatabase: {settings.main_db}")
-    print("Sign in by requesting a link for one of these emails. The console prints it.")
+    # A few rated impressions in both directions, some ending in matches with messages.
+    matches = 0
+    for email, user_id in users:
+        for target in manager.eligible_candidates(user_id, LIVE_RUN_ID)[:3]:
+            impression = live.create_impression(user_id, target, "random", len(manager.eligible_candidates(user_id)))
+            live.claim_impression(impression.impression_id, user_id)
+            score = rng.uniform(1, 10)
+            manager.add_rating(user_id, target, (score - 1) / 9, LIVE_RUN_ID, matcher="random")
+            reverse = [r for r in manager.ratings_by_rater(target, LIVE_RUN_ID) if r.target_id == user_id]
+            if reverse and score >= settings.match_threshold and 1 + 9 * reverse[0].score >= settings.match_threshold:
+                match = live.create_match(user_id, target)
+                live.add_message(match.match_id, user_id, "Hi! Nice to match with you.")
+                live.add_message(match.match_id, target, "Hey, likewise. How's your week going?")
+                matches += 1
+
+    # Then a handful of guaranteed matches: pairs who are in each other's pools rate each other highly.
+    paired: set[str] = set()
+    for email, user_id in users:
+        if matches >= 8 or user_id in paired:
+            continue
+        partner = next(
+            (t for t in manager.eligible_candidates(user_id, LIVE_RUN_ID)
+             if t not in paired and user_id in manager.eligible_candidates(t, LIVE_RUN_ID)),
+            None,
+        )
+        if partner is None:
+            continue
+        for rater, target in ((user_id, partner), (partner, user_id)):
+            impression = live.create_impression(rater, target, "random", len(manager.eligible_candidates(rater)))
+            live.claim_impression(impression.impression_id, rater)
+            manager.add_rating(rater, target, (rng.uniform(8, 10) - 1) / 9, LIVE_RUN_ID, matcher="random")
+        match = live.create_match(user_id, partner)
+        live.add_message(match.match_id, user_id, "Hi! Nice to match with you.")
+        live.add_message(match.match_id, partner, "Hey, likewise. How's your week going?")
+        paired.update({user_id, partner})
+        matches += 1
+
+    print(f"Created {len(users)} approved users and {matches} matches in {settings.main_db}")
+    print("Sign in as any of dev.user01@bu.edu to dev.user40@bu.edu. The console prints the link.")
 
 
 if __name__ == "__main__":

@@ -20,7 +20,10 @@ LIVE_SCHEMA = (
         consent_at       TEXT,
         created_at       TEXT NOT NULL,
         approved_at      TEXT,
-        approved_by      TEXT
+        approved_by      TEXT,
+        experiment_opt_out INTEGER NOT NULL DEFAULT 0 CHECK (experiment_opt_out IN (0, 1)),
+        notify_on_match    INTEGER NOT NULL DEFAULT 1 CHECK (notify_on_match IN (0, 1)),
+        paused             INTEGER NOT NULL DEFAULT 0 CHECK (paused IN (0, 1))
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_accounts_status ON accounts (status)",
@@ -113,11 +116,55 @@ LIVE_SCHEMA = (
         matcher       TEXT NOT NULL,
         pool_size     INTEGER NOT NULL,
         shown_at      TEXT NOT NULL,
-        rated_at      TEXT
+        rated_at      TEXT,
+        predicted_score REAL,   -- The matcher's score for this profile, if it gives one.
+        position        INTEGER -- This is the viewer's nth impression, starting at 1.
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_impressions_viewer ON impressions (viewer_id, target_id)",
     "CREATE INDEX IF NOT EXISTS idx_impressions_target ON impressions (target_id)",
+    """
+    CREATE TABLE IF NOT EXISTS impression_candidates (
+        impression_id   TEXT NOT NULL REFERENCES impressions (impression_id) ON DELETE CASCADE,
+        candidate_id    TEXT NOT NULL REFERENCES profiles (user_id) ON DELETE CASCADE,
+        predicted_score REAL NOT NULL,
+        PRIMARY KEY (impression_id, candidate_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS surveys (
+        survey_id  TEXT PRIMARY KEY,
+        user_id    TEXT NOT NULL REFERENCES profiles (user_id) ON DELETE CASCADE,
+        kind       TEXT NOT NULL CHECK (kind IN ('session', 'post_match')),
+        match_id   TEXT REFERENCES matches (match_id) ON DELETE SET NULL,
+        score      INTEGER NOT NULL CHECK (score BETWEEN 1 AND 5),
+        created_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS survey_prompts (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id    TEXT NOT NULL REFERENCES profiles (user_id) ON DELETE CASCADE,
+        kind       TEXT NOT NULL CHECK (kind IN ('session', 'post_match')),
+        match_id   TEXT REFERENCES matches (match_id) ON DELETE CASCADE,
+        shown_at   TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_survey_prompts_user ON survey_prompts (user_id, kind)",
+    """
+    CREATE TABLE IF NOT EXISTS app_settings (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    )
+    """,
+    # Counts of errors and failed emails, with no personal data, for the admin overview.
+    """
+    CREATE TABLE IF NOT EXISTS app_events (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        kind       TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )
+    """,
     """
     CREATE TABLE IF NOT EXISTS audit_log (
         id               INTEGER PRIMARY KEY AUTOINCREMENT,

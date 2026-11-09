@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Reports{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block content %}
+{% include "admin/_nav.html" %}
+<h1>Open reports</h1>
+{% for r in reports %}
+<article>
+  <h2>{{ r.reason|capitalize }}</h2>
+  <p>Reported {{ r.created_at[:16].replace("T", " ") }} UTC. Reported user: {{ r.reported_id or "deleted" }}.</p>
+  {% if r.details %}<p>Details: {{ r.details }}</p>{% endif %}
+  {% if r.match_id %}<p><a href="/admin/reports/{{ r.report_id }}/conversation">View conversation (logged)</a></p>{% endif %}
+  <form method="post" action="/admin/reports/{{ r.report_id }}/resolve">
+    {% include "partials/csrf.html" %}
+    <label for="note-{{ r.report_id }}">Resolution note</label>
+    <input id="note-{{ r.report_id }}" name="note" maxlength="1000">
+    <button type="submit">Resolve</button>
+  </form>
+</article>
+{% else %}
+<p>No open reports.</p>
+{% endfor %}
+{% endblock %}

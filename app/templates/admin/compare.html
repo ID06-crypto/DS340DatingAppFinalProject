@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Compare algorithms{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block head %}<script src="/static/vendor/chart.umd.js" defer></script><script src="/static/admin.js" defer></script>{% endblock %}
+{% block content %}
+{% include "admin/_nav.html" %}
+<h1>Compare algorithms</h1>
+<form method="get" action="/admin/compare">
+  <label for="k">First k impressions per user</label>
+  <input id="k" name="k" type="number" min="1" max="100" value="{{ k }}">
+  <button type="submit">Update</button>
+</form>
+<h2>Definitions</h2>
+<ul>
+  <li>A rating is <strong>positive</strong> at {{ settings.positive_threshold }} or above, on the 1 to 10 scale.</li>
+  <li>A prediction is <strong>positive</strong> at {{ settings.prediction_threshold }} or above. Matchers predict on a 0 to 1 scale.</li>
+  <li>Only rated impressions count, and opted-out users are left out.</li>
+  <li>Intervals are 95% bootstrap intervals that resample users, not ratings. Each number shows n users and n ratings.</li>
+  <li>Groups with fewer than {{ settings.min_group_size }} users are suppressed. When one group is suppressed, the next smallest is too.</li>
+  <li>Ratings made in under {{ settings.rapid_rating_ms }} ms are flagged, not removed.</li>
+</ul>
+<p class="notice"><strong>Selection bias:</strong> an algorithm that chooses who to show is evaluated on the people it chose, so classification metrics for non-random algorithms aren't comparable with the random one. The random algorithm's data is the unbiased sample for offline evaluation.</p>
+
+{% macro cell(m) %}{% if m.value is none %}n/a{% else %}{{ m.value }}{% if m.low is not none %} ({{ m.low }} to {{ m.high }}){% endif %}{% endif %}<br><small>n = {{ m.n_users }} users, {{ m.n_ratings }} ratings</small>{% endmacro %}
+
+{% if arms %}
+<h2>Headline</h2>
+<table>
+  <thead><tr><th scope="col">Metric</th>{% for arm in arms %}<th scope="col">{{ arm.matcher }}</th>{% endfor %}</tr></thead>
+  <tbody>
+    <tr><th scope="row">Users</th>{% for arm in arms %}<td>{{ arm.users }}</td>{% endfor %}</tr>
+    <tr><th scope="row">Impressions</th>{% for arm in arms %}<td>{{ arm.impressions }}</td>{% endfor %}</tr>
+    <tr><th scope="row">Ratings</th>{% for arm in arms %}<td>{{ arm.ratings }}</td>{% endfor %}</tr>
+    {% for metric in arms[0].headline %}
+    <tr><th scope="row">{{ metric }}</th>{% for arm in arms %}<td>{{ cell(arm.headline[metric]) }}</td>{% endfor %}</tr>
+    {% endfor %}
+    <tr><th scope="row">Share rated under {{ settings.rapid_rating_ms }} ms</th>{% for arm in arms %}<td>{% if arm.rapid_share is none %}n/a{% else %}{{ (arm.rapid_share * 100)|round(1) }}%{% endif %}</td>{% endfor %}</tr>
+  </tbody>
+</table>
+
+<h2>Rating by position</h2>
+<p>Mean rating at each impression position. Everyone eventually sees everyone, so algorithms mostly differ in early positions.</p>
+<div class="chart-box"><canvas data-chart="{{ position_chart }}" role="img" aria-label="Line chart of mean rating by impression position for each algorithm. The table above has the summary numbers."></canvas></div>
+
+<h2>Distribution of ratings</h2>
+<div class="chart-box"><canvas data-chart="{{ histogram_chart }}" role="img" aria-label="Bar chart of how many ratings fell in each whole number from 1 to 10, per algorithm."></canvas></div>
+<table>
+  <thead><tr><th scope="col">Rating</th>{% for arm in arms %}<th scope="col">{{ arm.matcher }}</th>{% endfor %}</tr></thead>
+  <tbody>{% for b in range(10) %}<tr><th scope="row">{{ b + 1 }}</th>{% for arm in arms %}<td>{{ arm.histogram[b] }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+</table>
+
+<h2>Predictions</h2>
+{% for arm in arms %}
+<h3>{{ arm.matcher }}</h3>
+{% if arm.classification %}
+{% set c = arm.classification %}
+<table>
+  <thead><tr><th scope="col"></th><th scope="col">Predicted positive</th><th scope="col">Predicted negative</th></tr></thead>
+  <tbody>
+    <tr><th scope="row">Rated positive</th><td>{{ c.matrix.tp }} (true positive)</td><td>{{ c.matrix.fn }} (false negative)</td></tr>
+    <tr><th scope="row">Rated negative</th><td>{{ c.matrix.fp }} (false positive)</td><td>{{ c.matrix.tn }} (true negative)</td></tr>
+  </tbody>
+</table>
+<p>Accuracy {{ c.accuracy|round(3) if c.accuracy is not none else "n/a" }}, precision {{ c.precision|round(3) if c.precision is not none else "n/a" }}, recall {{ c.recall|round(3) if c.recall is not none else "n/a" }}.</p>
+<p>F1: {{ cell(c.f1) }}</p>
+<p>AUC: {{ cell(c.auc) }}</p>
+{% else %}
+<p>Accuracy, precision, recall, F1, AUC: n/a (no predictions).</p>
+{% endif %}
+{% endfor %}
+
+<h2>Groups</h2>
+{% for arm in arms %}
+<h3>{{ arm.matcher }}</h3>
+{% for title, entries in arm.groups.items() %}
+<table>
+  <caption>{{ title }} of the rater</caption>
+  <thead><tr><th scope="col">Group</th><th scope="col">Mean rating</th><th scope="col">Share positive</th></tr></thead>
+  <tbody>
+  {% for g in entries %}
+  <tr><th scope="row">{{ g.group }}</th>
+    {% if g.suppressed %}<td colspan="2">suppressed (fewer than {{ settings.min_group_size }} users)</td>
+    {% else %}<td>{{ cell(g.mean_rating) }}</td><td>{{ cell(g.share_positive) }}</td>{% endif %}</tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endfor %}
+{% endfor %}
+{% else %}
+<p>No rated impressions yet.</p>
+{% endif %}
+{% endblock %}

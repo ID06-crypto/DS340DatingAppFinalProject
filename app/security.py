@@ -14,11 +14,17 @@ UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 _LOCAL_PART = re.compile(r"[a-z0-9._%-]+")
 _TOKEN_IN_TEXT = re.compile(r"(token=)[^&\s\"']+")
 
+# Only this site's own files: no inline scripts or styles, and nothing from other origins.
+CONTENT_SECURITY_POLICY = (
+    "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; "
+    "connect-src 'self'; font-src 'self'; form-action 'self'; frame-ancestors 'none'; "
+    "base-uri 'none'; object-src 'none'"
+)
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
-    "Referrer-Policy": "same-origin",
-    "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
+    "Referrer-Policy": "no-referrer",
+    "Content-Security-Policy": CONTENT_SECURITY_POLICY,
     "Cross-Origin-Resource-Policy": "same-origin",
     "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
 }
@@ -48,14 +54,21 @@ def origin_of(url: str) -> str:
     return f"{parts.scheme}://{parts.netloc}"
 
 
-def same_origin(request: Request, site_url: str) -> bool:
+def same_origin(request: Request, site_url: str, page: bool = False) -> bool:
     """CSRF check: a state-changing request must come from the configured site.
 
-    Browsers send Origin on cross-site POSTs, and Referer as a fallback. A request with
-    neither is refused, so non-browser clients must send Origin themselves.
+    Browsers send Origin on cross-site POSTs, and Referer as a fallback. For the JSON API,
+    a request with neither is refused, so non-browser clients must send Origin themselves.
+
+    Pages use Referrer-Policy: no-referrer, so browsers send "Origin: null" on ordinary form
+    posts. A page request with a null or missing Origin is let through here, and every page
+    that changes anything then requires the session's CSRF token. A foreign Origin is
+    always refused.
     """
     expected = origin_of(site_url)
     origin = request.headers.get("origin")
+    if page and origin in (None, "null"):
+        return True
     if origin is not None:
         return origin == expected
     referer = request.headers.get("referer")
@@ -65,13 +78,17 @@ def same_origin(request: Request, site_url: str) -> bool:
 def install_security(app, site_url: str, secure: bool) -> None:
     @app.middleware("http")
     async def guard(request: Request, call_next):
-        if request.method in UNSAFE_METHODS and not same_origin(request, site_url):
+        page = request.url.path.startswith("/ui/")
+        if request.method in UNSAFE_METHODS and not same_origin(request, site_url, page):
             response = JSONResponse({"detail": "Cross-site request refused"}, status_code=403)
         else:
             response = await call_next(request)
         for name, value in SECURITY_HEADERS.items():
             response.headers.setdefault(name, value)
-        response.headers.setdefault("Cache-Control", "no-store")
+        if request.url.path.startswith("/static/"):
+            response.headers.setdefault("Cache-Control", "public, max-age=3600")
+        else:
+            response.headers.setdefault("Cache-Control", "no-store")  # Pages hold personal data.
         if secure:
             response.headers.setdefault("Strict-Transport-Security", "max-age=31536000")
         return response

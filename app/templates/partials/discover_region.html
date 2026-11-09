@@ -1,0 +1,9 @@
+{% if notice %}<p class="notice" role="status">{{ notice }}</p>{% endif %}
+{% if survey %}{% include "partials/survey.html" %}{% endif %}
+{% if card.impression %}
+  {% include "partials/card.html" %}
+{% else %}
+  <section aria-labelledby="end-heading">
+    <h2 id="end-heading" tabindex="-1" data-focus>{{ card.message }}</h2>
+  </section>
+{% endif %}

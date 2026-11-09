@@ -1,0 +1,47 @@
+{% set p = person.profile %}
+<article aria-labelledby="card-heading">
+  {% if person.photo_ids %}
+  <div class="carousel" role="region" aria-label="Photos of {{ p.name }}" tabindex="0">
+    {% for photo_id in person.photo_ids %}
+    <img src="/photos/{{ photo_id }}" alt="Photo {{ loop.index }} of {{ person.photo_ids|length }} of {{ p.name }}">
+    {% endfor %}
+  </div>
+  {% if person.photo_ids|length > 1 %}<p class="photo-count">{{ person.photo_ids|length }} photos. Swipe or scroll sideways to see them all.</p>{% endif %}
+  {% endif %}
+  <h2 id="card-heading" tabindex="-1" data-focus>{{ p.name }}, {{ p.age }}</h2>
+  <dl class="facts">
+    <dt>Height</dt><dd>{{ height_text(p.height_cm) }}</dd>
+    <dt>School</dt><dd>{{ p.school }}</dd>
+    <dt>Major</dt><dd>{{ p.major }}</dd>
+    <dt>Job</dt><dd>{{ p.job }}</dd>
+    <dt>Looking for</dt><dd>{{ p.looking_for }}</dd>
+    <dt>Interests</dt><dd>{{ p.interests|join(", ") }}</dd>
+    {% if p.clubs %}<dt>Clubs</dt><dd>{{ p.clubs|join(", ") }}</dd>{% endif %}
+    {% if p.religion %}<dt>Religion</dt><dd>{{ p.religion }}</dd>{% endif %}
+  </dl>
+
+  <form class="rating" method="post" action="/discover/rate" hx-post="/discover/rate" hx-target="#card-region" hx-swap="innerHTML">
+    {% include "partials/csrf.html" %}
+    <input type="hidden" name="impression_id" value="{{ card.impression.impression_id }}">
+    <fieldset>
+      <legend>How interested are you in {{ p.name }}?</legend>
+      {% if error %}<p class="error" id="rating-error" role="alert">{{ error }}</p>{% endif %}
+      <label for="score-slider">Interest, from 1 to 10</label>
+      <input id="score-slider" class="untouched" type="range" min="1" max="10" step="0.1" aria-describedby="score-anchors">
+      <div class="anchors" id="score-anchors">
+        <span>1: not interested</span><span>5.5: neutral</span><span>10: really interested</span>
+      </div>
+      <label for="score">Or type a number from 1.0 to 10.0</label>
+      <input id="score" name="score" type="number" min="1" max="10" step="0.1" inputmode="decimal" required>
+    </fieldset>
+    <button type="submit" disabled>Submit rating</button>
+  </form>
+  <p class="people-left">{{ card.people_left }} {% if card.people_left == 1 %}person{% else %}people{% endif %} left for you right now.</p>
+  <details>
+    <summary>More options for {{ p.name }}</summary>
+    <ul>
+      <li><a href="/people/{{ p.user_id }}/report">Report {{ p.name }}</a></li>
+      <li><a href="/people/{{ p.user_id }}/block">Block {{ p.name }}</a></li>
+    </ul>
+  </details>
+</article>

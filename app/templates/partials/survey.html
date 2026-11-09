@@ -1,0 +1,19 @@
+<section class="notice" aria-labelledby="survey-heading">
+  <h2 id="survey-heading">{{ survey.question }}</h2>
+  <form method="post" action="/survey" hx-post="/survey" hx-target="closest section" hx-swap="outerHTML">
+    {% include "partials/csrf.html" %}
+    <input type="hidden" name="kind" value="{{ survey.kind }}">
+    {% if survey.match_id %}<input type="hidden" name="match_id" value="{{ survey.match_id }}">{% endif %}
+    <input type="hidden" name="back" value="{{ survey.back }}">
+    <fieldset>
+      <legend>1 means not at all, 5 means very much</legend>
+      {% for n in range(1, 6) %}<label><input type="radio" name="score" value="{{ n }}" required> {{ n }}</label>{% endfor %}
+    </fieldset>
+    <button type="submit">Send answer</button>
+  </form>
+  <form method="post" action="/survey/dismiss" hx-post="/survey/dismiss" hx-target="closest section" hx-swap="outerHTML">
+    {% include "partials/csrf.html" %}
+    <input type="hidden" name="back" value="{{ survey.back }}">
+    <button type="submit">No thanks</button>
+  </form>
+</section>

@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Report {{ name }}{% endblock %}
+{% block content %}
+<h1>Report {{ name }}</h1>
+<p>Administrators will review this. {{ name }} isn't told who reported them.{% if match_id %} Because you've matched, an administrator may read your conversation to review it, and that access is logged.{% endif %}</p>
+<form method="post" action="/people/{{ user_id }}/report">
+  {% include "partials/csrf.html" %}
+  {% if match_id %}<input type="hidden" name="match_id" value="{{ match_id }}">{% endif %}
+  {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+  <label for="reason">Reason</label>
+  <select id="reason" name="reason" required>
+    <option value="">Choose one</option>
+    {% for value, text in [("harassment", "Harassment"), ("spam", "Spam"), ("fake", "Fake profile"), ("inappropriate", "Inappropriate content"), ("other", "Something else")] %}
+    <option value="{{ value }}">{{ text }}</option>
+    {% endfor %}
+  </select>
+  <label for="details">Details (optional, up to 1,000 characters)</label>
+  <textarea id="details" name="details" maxlength="1000" rows="4"></textarea>
+  <button type="submit">Send report</button>
+</form>
+<p><a href="{{ back }}">Cancel</a></p>
+{% endblock %}

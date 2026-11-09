@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Confirm it's you{% endblock %}
+{% block content %}
+<h1>Confirm it's you</h1>
+<p>Admin pages need a sign-in from the last hour. We'll email a new link to your address.</p>
+<form method="post" action="/admin/step-up">{% include "partials/csrf.html" %}<button type="submit">Email me a sign-in link</button></form>
+{% endblock %}

@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Consent{% endblock %}
+{% block content %}
+<h1>Before you start</h1>
+<p>Please read this. It's version {{ version }}.</p>
+<article>{% for paragraph in consent_paragraphs %}<p>{{ paragraph }}</p>{% endfor %}</article>
+<form method="post" action="/onboarding/consent">
+  {% include "partials/csrf.html" %}
+  <input type="hidden" name="version" value="{{ version }}">
+  {% if error %}<p class="error" id="consent-error">{{ error }}</p>{% endif %}
+  <label>
+    <input type="checkbox" name="agree" value="yes" required {% if error %}aria-describedby="consent-error"{% endif %}>
+    I've read this and agree to take part
+  </label>
+  <button type="submit">Continue</button>
+</form>
+{% endblock %}

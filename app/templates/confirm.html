@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}{{ heading }}{% endblock %}
+{% block content %}
+<h1>{{ heading }}</h1>
+{% for paragraph in paragraphs %}<p>{{ paragraph }}</p>{% endfor %}
+<form method="post" action="{{ action }}">
+  {% include "partials/csrf.html" %}
+  <button type="submit">{{ button }}</button>
+</form>
+<p><a href="{{ cancel }}">Cancel</a></p>
+{% endblock %}

@@ -40,7 +40,16 @@ class Settings:
     session_days: int = 14
     login_token_minutes: int = 15
     enabled_matchers: tuple[str, ...] = ("random",)
+    default_matcher: str = "random"  # Serves users who opt out of the experiment.
     matcher_seed: int | None = None
+    # Analytics. POSITIVE_THRESHOLD is on the 1 to 10 scale, PREDICTION_THRESHOLD on 0 to 1.
+    positive_threshold: float = 7.0
+    prediction_threshold: float = 0.5
+    min_group_size: int = 10
+    rapid_rating_ms: int = 800
+    admin_step_up_minutes: int = 60
+    export_salt: str = field(default="", repr=False)
+    source_repo_url: str = ""
     email_sender: str = "console"
     smtp_host: str = ""
     smtp_port: int = 587
@@ -72,7 +81,15 @@ class Settings:
             session_days=int(os.environ.get("SESSION_DAYS", cls.session_days)),
             login_token_minutes=int(os.environ.get("LOGIN_TOKEN_MINUTES", cls.login_token_minutes)),
             enabled_matchers=_list("ENABLED_MATCHERS", "random"),
+            default_matcher=os.environ.get("DEFAULT_MATCHER", cls.default_matcher),
             matcher_seed=int(seed) if seed else None,
+            positive_threshold=float(os.environ.get("POSITIVE_THRESHOLD", cls.positive_threshold)),
+            prediction_threshold=float(os.environ.get("PREDICTION_THRESHOLD", cls.prediction_threshold)),
+            min_group_size=int(os.environ.get("MIN_GROUP_SIZE", cls.min_group_size)),
+            rapid_rating_ms=int(os.environ.get("RAPID_RATING_MS", cls.rapid_rating_ms)),
+            admin_step_up_minutes=int(os.environ.get("ADMIN_STEP_UP_MINUTES", cls.admin_step_up_minutes)),
+            export_salt=os.environ.get("EXPORT_SALT", ""),
+            source_repo_url=os.environ.get("SOURCE_REPO_URL", ""),
             email_sender=os.environ.get("EMAIL_SENDER", cls.email_sender),
             smtp_host=os.environ.get("SMTP_HOST", ""),
             smtp_port=int(os.environ.get("SMTP_PORT", cls.smtp_port)),

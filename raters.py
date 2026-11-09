@@ -50,10 +50,18 @@ def build_rater_input(
     can't influence the score.
     """
     return {
-        "rater_profile": rater_profile.model_dump(exclude={"agent"}),
+        "rater_profile": _shown_fields(rater_profile),
         "rater_persona": rater_persona.description,
-        "target_profile": target_profile.model_dump(exclude={"agent"}),
+        "target_profile": _shown_fields(target_profile),
     }
+
+
+def _shown_fields(profile: Profile) -> dict[str, Any]:
+    """A profile without the agent flag, and without religion when none was given."""
+    fields = profile.model_dump(exclude={"agent"})
+    if fields["religion"] is None:
+        del fields["religion"]
+    return fields
 
 
 class Rater(ABC):

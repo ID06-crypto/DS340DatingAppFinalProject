@@ -23,7 +23,7 @@ SCHEMA = (
         name          TEXT NOT NULL,
         age           INTEGER NOT NULL,
         height_cm     INTEGER NOT NULL,
-        religion      TEXT NOT NULL,
+        religion      TEXT,
         school        TEXT NOT NULL,
         major         TEXT NOT NULL,
         job           TEXT NOT NULL,
@@ -109,7 +109,7 @@ class DuplicateRunError(ValueError):
 
 
 class OutdatedSchemaError(RuntimeError):
-    """The database was made before preferences moved off profiles. Migrate it first."""
+    """The database uses an older schema. Run scripts/migrate_schema.py on it first."""
 
 
 class MutualPair(NamedTuple):
@@ -166,7 +166,8 @@ _ELIGIBLE_CANDIDATES = """
         AND EXISTS (SELECT 1 FROM preferences WHERE user_id = c.user_id AND gender = me.gender)
         AND CASE WHEN :live
             THEN EXISTS (
-                SELECT 1 FROM accounts WHERE user_id = c.user_id AND status = 'approved'
+                SELECT 1 FROM accounts
+                WHERE user_id = c.user_id AND status = 'approved' AND paused = 0
             )
             -- Simulated users have no account, and count as approved in simulations.
             ELSE NOT EXISTS (
@@ -194,16 +195,31 @@ _ELIGIBLE_CANDIDATES = """
 """
 
 
+# Columns added after a table was first created. CREATE TABLE IF NOT EXISTS can't add them.
+REQUIRED_COLUMNS = {
+    "ratings": {"matcher"},
+    "accounts": {"experiment_opt_out", "notify_on_match", "paused"},
+    "impressions": {"predicted_score", "position"},
+}
+
+
 def _check_schema(db_path: str | Path) -> None:
-    """Refuse a database from before preferences moved off profiles, with how to fix it."""
+    """Refuse a database made with an older schema, and say how to migrate it."""
     if not Path(db_path).exists():
         return
     with connect(db_path) as conn:
-        profiles = {row["name"] for row in conn.execute("PRAGMA table_info(profiles)")}
-        ratings = {row["name"] for row in conn.execute("PRAGMA table_info(ratings)")}
-    if "interested_in" in profiles or (ratings and "matcher" not in ratings):
+        columns = {
+            table: {row["name"]: row for row in conn.execute(f"PRAGMA table_info({table})")}
+            for table in ("profiles", *REQUIRED_COLUMNS)
+        }
+    profiles = columns["profiles"]
+    outdated = "interested_in" in profiles or (profiles and profiles["religion"]["notnull"])
+    for table, required in REQUIRED_COLUMNS.items():
+        if columns[table] and not required <= set(columns[table]):
+            outdated = True
+    if outdated:
         raise OutdatedSchemaError(
-            f"{db_path} uses an older schema. Run: python scripts/migrate_preferences.py {db_path}"
+            f"{db_path} uses an older schema. Run: python scripts/migrate_schema.py {db_path}"
         )
 
 
@@ -323,7 +339,7 @@ class Store:
     def eligible_candidates(self, user_id: str, run_id: str = LIVE_RUN_ID) -> list[str]:
         """The user_ids this user may be shown next in this run, sorted.
 
-        Only approved accounts, never themselves, nobody blocked either way, nobody they
+        Only approved, unpaused accounts, never themselves, nobody blocked either way, nobody they
         have an active match with, mutual gender interest, and nobody they've already
         rated in this run. In the live app, also nobody they've already been shown.
         Users without preferences have an empty pool and appear in nobody's.

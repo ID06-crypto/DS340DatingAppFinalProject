@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Your profile{% endblock %}
+{% block content %}
+<h1>{% if editing %}Edit your profile{% else %}Your profile{% endif %}</h1>
+<p>Other people see your first name and everything below except your last name.</p>
+<form method="post" action="{{ action }}" novalidate>
+  {% include "partials/csrf.html" %}
+  {% macro field(name, label, type="text", hint=None, attrs="") %}
+    <label for="{{ name }}">{{ label }}</label>
+    <input id="{{ name }}" name="{{ name }}" type="{{ type }}" value="{{ values.get(name, '') }}" {{ attrs }}
+      {% if errors.get(name) %}aria-invalid="true" aria-describedby="{{ name }}-error"{% elif hint %}aria-describedby="{{ name }}-hint"{% endif %}>
+    {% if hint %}<small id="{{ name }}-hint">{{ hint }}</small>{% endif %}
+    {% if errors.get(name) %}<p class="error" id="{{ name }}-error">{{ errors[name] }}</p>{% endif %}
+  {% endmacro %}
+  {{ field("name", "Name", attrs='autocomplete="name" required') }}
+  {{ field("age", "Age", "number", attrs='min="18" max="100" required') }}
+  {{ field("height_cm", "Height in centimeters", "number", "For example, 170 cm is about 5 ft 7 in.", 'min="120" max="230" required') }}
+  <label for="gender">Gender</label>
+  <select id="gender" name="gender" required {% if errors.get("gender") %}aria-invalid="true" aria-describedby="gender-error"{% endif %}>
+    <option value="">Choose one</option>
+    {% for value, text in [("man", "Man"), ("woman", "Woman"), ("nonbinary", "Nonbinary")] %}
+    <option value="{{ value }}" {% if values.get("gender") == value %}selected{% endif %}>{{ text }}</option>
+    {% endfor %}
+  </select>
+  {% if errors.get("gender") %}<p class="error" id="gender-error">{{ errors["gender"] }}</p>{% endif %}
+  {{ field("school", "School", attrs='required') }}
+  {{ field("major", "Major", attrs='required') }}
+  {{ field("job", "Job", "text", "Write \"student\" if you don't have one.", 'required') }}
+  {{ field("interests", "Interests", "text", "Separate them with commas, for example: hiking, chess, film.", 'required') }}
+  {{ field("clubs", "Clubs (optional)", "text", "Separate them with commas. Leave blank if none.") }}
+  <label for="looking_for">Looking for</label>
+  <select id="looking_for" name="looking_for" required {% if errors.get("looking_for") %}aria-invalid="true" aria-describedby="looking_for-error"{% endif %}>
+    <option value="">Choose one</option>
+    {% for value, text in [("long-term", "Something long-term"), ("short-term", "Something short-term"), ("just a date", "Just a date")] %}
+    <option value="{{ value }}" {% if values.get("looking_for") == value %}selected{% endif %}>{{ text }}</option>
+    {% endfor %}
+  </select>
+  {% if errors.get("looking_for") %}<p class="error" id="looking_for-error">{{ errors["looking_for"] }}</p>{% endif %}
+  {{ field("religion", "Religion (optional)", "text", "Leave blank for \"prefer not to say\". It's only shown if you fill it in.") }}
+  <button type="submit">Save</button>
+</form>
+{% if editing %}<p><a href="/me">Back to Me</a></p>{% endif %}
+{% endblock %}

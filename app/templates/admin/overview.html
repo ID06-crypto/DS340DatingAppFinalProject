@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Admin{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block content %}
+{% include "admin/_nav.html" %}
+<h1>Experiment overview</h1>
+<dl class="facts">
+  <dt>Approved users</dt><dd>{{ data.approved_users }}</dd>
+  <dt>Opted out</dt><dd>{{ data.opted_out }}</dd>
+  <dt>Matches (all)</dt><dd>{{ data.matches }}</dd>
+  <dt>Server errors</dt><dd>{{ events.get("server_error", 0) }}</dd>
+  <dt>Matcher errors</dt><dd>{{ events.get("matcher_error", 0) }}</dd>
+  <dt>Failed emails</dt><dd>{{ events.get("email_failure", 0) }}</dd>
+</dl>
+<h2>By matcher</h2>
+<p>Opted-out users are left out.</p>
+<table>
+  <thead><tr><th scope="col">Matcher</th><th scope="col">Impressions</th><th scope="col">Ratings</th><th scope="col">Rated profiles that became matches</th><th scope="col">Mean pool size</th></tr></thead>
+  <tbody>
+  {% for name, arm in data.arms.items() %}
+  <tr><th scope="row">{{ name }}</th><td>{{ arm.impressions }}</td><td>{{ arm.ratings }}</td><td>{{ arm.rated_into_match }}</td><td>{{ arm.mean_pool_size }}</td></tr>
+  {% else %}
+  <tr><td colspan="5">No impressions yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p><a href="/admin/export.csv">Download pseudonymized export (CSV)</a> · <a href="/admin/export.json">JSON</a></p>
+{% endblock %}

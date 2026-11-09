@@ -24,7 +24,7 @@ sys.path.insert(0, str(ROOT))
 
 from manager import ProfileManager  # noqa: E402
 from matching import CompatibleRandomMatcher  # noqa: E402
-from metrics import compute_metrics  # noqa: E402
+from run_metrics import compute_metrics  # noqa: E402
 from paths import MAIN_DB, PERSONA_DB  # noqa: E402
 from raters import JEV_PRICE_PER_MTOK, FakeRater, JevRater, Rater  # noqa: E402
 from simulation import run_simulation  # noqa: E402

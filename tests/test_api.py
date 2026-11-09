@@ -416,7 +416,7 @@ def test_already_shown_or_rated_profiles_never_repeat(env: Env) -> None:
         viewer.post("/ratings", json={"impression_id": feed["impression_id"], "score": score})
     assert set(seen) == ids
     empty = viewer.get("/feed/next").json()
-    assert empty == {"profile": None, "pool_size": 0, "message": "No one left to show right now."}
+    assert empty == {"profile": None, "pool_size": 0, "message": "You've seen everyone available to you right now. New people may join."}
 
 
 def test_active_matches_leave_the_pool_and_simulations_skip_unapproved_accounts(env: Env) -> None:
@@ -845,7 +845,10 @@ def test_security_headers_are_on_every_response(env: Env) -> None:
     for response in (env.client().get("/auth/consent"), env.client().get("/feed/next"), env.client("https://evil.example").post("/auth/logout")):
         assert response.headers["x-content-type-options"] == "nosniff"
         assert response.headers["x-frame-options"] == "DENY"
-        assert "default-src 'none'" in response.headers["content-security-policy"]
+        assert "default-src 'self'" in response.headers["content-security-policy"]
+        assert "script-src 'self'" in response.headers["content-security-policy"]
+        assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
+        assert response.headers["referrer-policy"] == "no-referrer"
         assert response.headers["cache-control"] == "no-store"
 
 

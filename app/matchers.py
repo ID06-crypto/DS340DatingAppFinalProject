@@ -1,7 +1,9 @@
 """The registry of matchers the feed can serve from.
 
-Each matcher is created once and kept in memory, so its state assumes one server process.
-To add one, register a factory here and list its name in ENABLED_MATCHERS.
+Every registered matcher is created once and kept in memory, so its state assumes one
+server process. ENABLED_MATCHERS sets which are switched on when the database is new.
+After that, admins switch them on and off and set their weights on the controls page.
+To add one, register a factory here.
 """
 
 import random
@@ -14,8 +16,11 @@ REGISTRY: dict[str, Callable[[random.Random], Matcher]] = {
 }
 
 
-def build_matchers(names: tuple[str, ...], rng: random.Random) -> dict[str, Matcher]:
-    unknown = [name for name in names if name not in REGISTRY]
-    if unknown or not names:
-        raise ValueError(f"ENABLED_MATCHERS must name registered matchers, got {list(names)}")
-    return {name: REGISTRY[name](random.Random(rng.random())) for name in names}
+def build_matchers(enabled: tuple[str, ...], default: str, rng: random.Random) -> dict[str, Matcher]:
+    """One instance of every registered matcher, after checking the configured names."""
+    unknown = [name for name in enabled if name not in REGISTRY]
+    if unknown or not enabled:
+        raise ValueError(f"ENABLED_MATCHERS must name registered matchers, got {list(enabled)}")
+    if default not in REGISTRY:
+        raise ValueError(f"DEFAULT_MATCHER must name a registered matcher, got {default!r}")
+    return {name: REGISTRY[name](random.Random(rng.random())) for name in sorted(REGISTRY)}

@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="htmx-config" content='{"includeIndicatorStyles": false, "allowEval": false, "allowScriptTags": false}'>
+  <title>{% block title %}Matching study{% endblock %} · BU matching study</title>
+  <link rel="stylesheet" href="/static/vendor/pico.classless.min.css">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/vendor/htmx.min.js" defer></script>
+  <script src="/static/app.js" defer></script>
+  {% block head %}{% endblock %}
+</head>
+<body{% if csrf %} hx-headers='{"X-CSRF-Token": "{{ csrf }}"}'{% endif %}>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <main id="main" class="{% block main_class %}{% endblock %}">
+    {% block content %}{% endblock %}
+  </main>
+  {% if is_member %}
+  <nav class="bottom" aria-label="Main">
+    <ul>
+      <li><a href="/discover" {% if nav == "discover" %}aria-current="page"{% endif %}>Discover</a></li>
+      <li><a href="/matches" {% if nav == "matches" %}aria-current="page"{% endif %}>Matches</a></li>
+      <li><a href="/me" {% if nav == "me" %}aria-current="page"{% endif %}>Me</a></li>
+      {% if is_admin %}<li><a href="/admin" {% if nav == "admin" %}aria-current="page"{% endif %}>Admin</a></li>{% endif %}
+    </ul>
+  </nav>
+  {% endif %}
+</body>
+</html>

@@ -67,6 +67,8 @@ def generate_profile(
     *,
     gay_rate: float = GAY_RATE,
     rng: random.Random | None = None,
+    blank_religion_rng: random.Random | None = None,
+    blank_religion_rate: float = 0.0,
 ) -> dict[str, Any]:
     """Return one random agent profile, plus "interested_in", which is private.
 
@@ -74,10 +76,14 @@ def generate_profile(
     to ProfileManager.add_profile, which generates the user_id. A seeded rng makes the
     profile reproducible, and the draws are in the same order as before preferences
     moved off profiles. Names and clubs are limited to those fitting the user's gender.
+
+    Religion is optional. To leave it blank for some users, pass blank_religion_rate and
+    a separate blank_religion_rng. Using a separate generator keeps every other field the
+    same as before, so existing datasets still reproduce exactly.
     """
     rng = rng if rng is not None else random.Random()
     gender = rng.choice(tuple(SAME_GENDER))
-    return {
+    profile = {
         "name": rng.choice(NAMES_BY_GENDER[gender]),
         "age": rng.randint(MIN_AGE, MAX_AGE),
         "height_cm": rng.randint(MIN_HEIGHT_CM, MAX_HEIGHT_CM),
@@ -92,3 +98,6 @@ def generate_profile(
         "looking_for": rng.choice(LOOKING_FOR),
         "agent": True,
     }
+    if blank_religion_rate and (blank_religion_rng or random.Random()).random() < blank_religion_rate:
+        profile["religion"] = None
+    return profile

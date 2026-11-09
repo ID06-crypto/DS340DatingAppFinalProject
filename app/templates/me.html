@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Me{% endblock %}
+{% block content %}
+<h1>Me</h1>
+{% if notice %}<p class="notice" role="status">{{ notice }}</p>{% endif %}
+<ul>
+  <li><a href="/me/profile">Edit profile</a></li>
+  <li><a href="/me/photos">Photos</a></li>
+  <li><a href="/me/preferences">Who you'd like to meet</a></li>
+  <li><a href="/me/blocked">Blocked people</a></li>
+</ul>
+
+<h2>Settings</h2>
+<form method="post" action="/me/settings">
+  {% include "partials/csrf.html" %}
+  <label><input type="checkbox" name="notify_on_match" value="yes" {% if account.notify_on_match %}checked{% endif %}> Email me when I get a new match</label>
+  <p><small>That's the only email we send besides sign-in links. It never includes names or photos.</small></p>
+  <label><input type="checkbox" name="experiment_opt_out" value="yes" aria-describedby="opt-out-help" {% if account.experiment_opt_out %}checked{% endif %}> Opt out of the experiment</label>
+  <p id="opt-out-help"><small>If you opt out, you always get the default way of choosing who you see, instead of a randomly chosen algorithm, and your data is left out of all analysis and exports. Everything else works the same.</small></p>
+  <button type="submit">Save settings</button>
+</form>
+
+<h2>Pause</h2>
+{% if account.paused %}
+<p>Your account is paused. Nobody can see you, and you can't see anyone new.</p>
+<form method="post" action="/me/unpause">{% include "partials/csrf.html" %}<button type="submit">Unpause my account</button></form>
+{% else %}
+<p>Pausing hides you from everyone without deleting anything. Your matches and messages stay.</p>
+<form method="post" action="/me/pause">{% include "partials/csrf.html" %}<button type="submit">Pause my account</button></form>
+{% endif %}
+
+<h2>Your data</h2>
+<p><a href="/me/data.json" download>Download my data</a> (JSON)</p>
+<p><a href="/me/delete">Delete my account</a></p>
+<p><a href="/transparency">How this works</a></p>
+<form method="post" action="/logout">{% include "partials/csrf.html" %}<button type="submit">Sign out</button></form>
+{% endblock %}

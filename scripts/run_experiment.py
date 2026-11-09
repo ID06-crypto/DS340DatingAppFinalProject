@@ -21,7 +21,7 @@ sys.path[:0] = [str(ROOT), str(ROOT / "scripts")]
 from backup_data import backup_databases, export_ratings  # noqa: E402
 from manager import ProfileManager  # noqa: E402
 from matching import CompatibleRandomMatcher  # noqa: E402
-from metrics import compute_metrics  # noqa: E402
+from run_metrics import compute_metrics  # noqa: E402
 from paths import DATA_DIR, MAIN_DB, PERSONA_DB  # noqa: E402
 from raters import JevRater  # noqa: E402
 from simulation import run_simulation  # noqa: E402

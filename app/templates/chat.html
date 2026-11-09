@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Chat with {{ name }}{% endblock %}
+{% block content %}
+<h1>{{ name }}</h1>
+{% if survey %}{% include "partials/survey.html" %}{% endif %}
+{% include "partials/chat.html" %}
+<details>
+  <summary>More options for {{ name }}</summary>
+  <ul>
+    <li><a href="/matches/{{ match_id }}/unmatch">Unmatch</a></li>
+    <li><a href="/people/{{ other_id }}/block">Block {{ name }}</a></li>
+    <li><a href="/people/{{ other_id }}/report?match_id={{ match_id }}">Report {{ name }}</a></li>
+  </ul>
+</details>
+<p><a href="/matches">Back to matches</a></p>
+{% endblock %}

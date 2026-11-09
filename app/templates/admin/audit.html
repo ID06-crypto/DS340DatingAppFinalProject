@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Audit log{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block content %}
+{% include "admin/_nav.html" %}
+<h1>Audit log</h1>
+<form method="get" action="/admin/audit">
+  <label for="action">Action</label><input id="action" name="action" value="{{ action }}">
+  <label for="actor">Actor account id</label><input id="actor" name="actor" value="{{ actor }}">
+  <button type="submit">Filter</button>
+</form>
+<table>
+  <thead><tr><th scope="col">Time (UTC)</th><th scope="col">Actor</th><th scope="col">Action</th><th scope="col">Target</th><th scope="col">Details</th></tr></thead>
+  <tbody>
+  {% for e in entries %}
+  <tr><td>{{ e.created_at[:19].replace("T", " ") }}</td><td>{{ e.actor_account_id }}</td><td>{{ e.action }}</td><td>{{ e.target or "" }}</td><td><code>{{ e.details }}</code></td></tr>
+  {% else %}<tr><td colspan="5">No entries.</td></tr>{% endfor %}
+  </tbody>
+</table>
+{% endblock %}

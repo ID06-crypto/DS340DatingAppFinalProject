@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Welcome{% endblock %}
+{% block content %}
+<h1>BU matching study</h1>
+<p>This is a free research project by BU students. It tests whether a matching algorithm can recommend people who like each other, without the tricks many apps use to keep you scrolling.</p>
+<p>You'll see one person at a time and rate how interested you are. If two people rate each other highly, they match and can chat. There are no streaks, notifications to bring you back, or ads.</p>
+<p><a href="/transparency">Read exactly what we collect and who can see it</a></p>
+<h2>Sign in or join</h2>
+<form method="post" action="/login">
+  <label for="email">Your BU email address</label>
+  <input id="email" name="email" type="email" autocomplete="email" required placeholder="you@bu.edu">
+  <button type="submit">Email me a sign-in link</button>
+</form>
+{% endblock %}

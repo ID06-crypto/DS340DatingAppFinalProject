@@ -113,7 +113,6 @@ def test_add_profile_rejects_invalid_supplied_id(
         "name",
         "age",
         "height_cm",
-        "religion",
         "school",
         "major",
         "job",
@@ -146,7 +145,7 @@ def test_add_profile_rejects_missing_field(
         {"height_cm": 231},
         {"name": ""},
         {"name": "   "},
-        {"religion": ""},
+        {"religion": 5},
         {"school": "  "},
         {"job": ""},
         {"interests": []},
@@ -214,6 +213,26 @@ def test_clubs_can_be_empty(manager: ProfileManager) -> None:
 def test_major_round_trips(manager: ProfileManager) -> None:
     profile = manager.add_profile(profile_data(major=" Computer Science "))
     assert manager.get_profile(profile.user_id).major == "Computer Science"
+
+
+@pytest.mark.parametrize(("given", "stored"), [("catholic", "catholic"), ("  jewish ", "jewish"), ("", None), ("   ", None), (None, None)])
+def test_religion_is_optional_and_blank_means_none(
+    manager: ProfileManager, tmp_path: Path, given: Any, stored: str | None
+) -> None:
+    profile = manager.add_profile(profile_data(religion=given))
+    assert profile.religion == stored
+    assert manager.get_profile(profile.user_id).religion == stored
+    manager.store.export_profiles_json(tmp_path / "profiles.json")
+    assert json.loads((tmp_path / "profiles.json").read_text())[0]["religion"] == stored
+
+
+def test_religion_can_be_left_out_and_cleared(manager: ProfileManager) -> None:
+    data = profile_data()
+    del data["religion"]
+    profile = manager.add_profile(data)
+    assert profile.religion is None
+    assert manager.edit_profile(profile.user_id, religion="buddhist").religion == "buddhist"
+    assert manager.edit_profile(profile.user_id, religion=" ").religion is None
 
 
 @pytest.mark.parametrize("gender", ["man", "woman", "nonbinary"])

@@ -56,7 +56,7 @@ class PublicProfile(BaseModel):
     name: NonEmptyStr
     age: int = Field(ge=18, le=100, strict=True)
     height_cm: int = Field(ge=120, le=230, strict=True)
-    religion: NonEmptyStr
+    religion: str | None = None  # Optional. Blank means "prefer not to say".
     school: NonEmptyStr
     major: NonEmptyStr
     job: NonEmptyStr
@@ -77,6 +77,13 @@ class PublicProfile(BaseModel):
         if parsed.version != 4 or str(parsed) != user_id:
             raise ValueError(f"user_id must be a UUID4 string, got {user_id!r}")
         return user_id
+
+    @field_validator("religion", mode="before")
+    @classmethod
+    def blank_religion_is_none(cls, religion: object) -> object:
+        if isinstance(religion, str):
+            return religion.strip() or None
+        return religion
 
     @field_validator("interests", "clubs")
     @classmethod

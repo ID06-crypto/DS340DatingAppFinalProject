@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}How this works{% endblock %}
+{% block content %}
+<h1>How this works</h1>
+
+<h2>What we collect</h2>
+<ul>
+  <li>Your BU email address, only to sign you in. Nobody else using the app sees it.</li>
+  <li>The profile you write, and your photos, with location and camera data removed.</li>
+  <li>Which genders you want to be shown. This is private.</li>
+  <li>Who you were shown, how you rated them, how long rating took, your matches, your messages, and your answers to short "was this worth your time?" questions.</li>
+</ul>
+
+<h2>Who can see what</h2>
+<ul>
+  <li><strong>Other people</strong> see your first name, profile, and photos only when you're shown to them or you've matched. They never see your email, your preferences, your ratings, or whether you rated them, unless you both matched.</li>
+  <li><strong>Your matches</strong> can message you until either of you unmatches or blocks.</li>
+  <li><strong>Administrators</strong> see your email, profile, and photos when approving accounts. They can read a match's messages only if someone in that match reports the other, and every such read is logged. They have no page to browse messages, individual ratings, or anyone's rating history.</li>
+  <li><strong>Researchers</strong> analyze data with names, emails, photos, religion, and exact ages removed, and with your id replaced by a code.</li>
+</ul>
+
+<h2>Recommendations are an experiment</h2>
+<p>We're comparing ways of choosing who you see. Each time you're shown someone, one of the algorithms below is picked at random to choose them. Some people deliberately get simple or random recommendations, because that's how we tell whether the others are better. You can opt out on your Me page, and you'll then always get the default algorithm, with your data left out of the analysis.</p>
+<ul>
+  {% for name, description in algorithms %}
+  <li><strong>{{ name }}</strong>: {{ description }}</li>
+  {% else %}
+  <li>No algorithms are enabled right now.</li>
+  {% endfor %}
+</ul>
+
+<h2>Design rules</h2>
+<p>This app is built to respect your time:</p>
+<ul>
+  {% for rule in design_rules %}<li>{{ rule }}</li>{% endfor %}
+</ul>
+
+<h2>Deleting your data</h2>
+<p>You can download your data or delete your account at any time from your Me page. Deleting erases your profile, preferences, photos, ratings, matches, messages, and blocks. Logs of administrator actions are kept, with your identity removed.</p>
+
+{% if source_url %}<p><a href="{{ source_url }}">Read the source code</a></p>{% endif %}
+<p><a href="/">Back to the start</a></p>
+{% endblock %}

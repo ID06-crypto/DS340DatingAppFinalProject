@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Who you'd like to meet{% endblock %}
+{% block content %}
+<h1>Who you'd like to meet</h1>
+<p>This is private. Nobody else ever sees it.</p>
+<p>Matching is mutual: you'll only see someone if they're a gender you chose, and you're a gender they chose. With about 100 people in the study, that can mean only a few people are available to you.</p>
+<form method="post" action="{{ action }}">
+  {% include "partials/csrf.html" %}
+  <fieldset {% if error %}aria-describedby="preferences-error"{% endif %}>
+    <legend>Show me</legend>
+    {% for value, text in [("man", "Men"), ("woman", "Women"), ("nonbinary", "Nonbinary people")] %}
+    <label><input type="checkbox" name="interested_in" value="{{ value }}" {% if value in chosen %}checked{% endif %}> {{ text }}</label>
+    {% endfor %}
+    <label><input type="checkbox" name="interested_in" value="everyone"> Everyone (all of the above)</label>
+  </fieldset>
+  {% if error %}<p class="error" id="preferences-error">{{ error }}</p>{% endif %}
+  <button type="submit">Save</button>
+</form>
+{% if editing %}<p><a href="/me">Back to Me</a></p>{% endif %}
+{% endblock %}

@@ -1,0 +1,14 @@
+<section id="chat" aria-labelledby="chat-heading">
+  <h2 id="chat-heading" class="visually-hidden">Messages</h2>
+  <div id="chat-log" hx-get="/matches/{{ match_id }}/log" hx-trigger="every 5s" hx-swap="innerHTML">
+    {% include "partials/messages.html" %}
+  </div>
+  <form method="post" action="/matches/{{ match_id }}/send" hx-post="/matches/{{ match_id }}/send" hx-target="#chat" hx-swap="outerHTML">
+    {% include "partials/csrf.html" %}
+    {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+    <label for="body">Message</label>
+    <textarea id="body" name="body" maxlength="2000" rows="3" required aria-describedby="body-limit"></textarea>
+    <small id="body-limit">Up to 2,000 characters.</small>
+    <button type="submit">Send</button>
+  </form>
+</section>

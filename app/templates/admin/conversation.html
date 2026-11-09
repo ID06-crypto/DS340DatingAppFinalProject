@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Reported conversation{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block content %}
+{% include "admin/_nav.html" %}
+<h1>Reported conversation</h1>
+<p class="notice">This access has been logged.</p>
+<ol class="messages">
+  {% for m in messages %}
+  <li><span class="who">{% if m.sender_id == report.reported_id %}Reported user{% else %}Other participant{% endif %}</span>
+    <time datetime="{{ m.created_at }}">{{ m.created_at[:16].replace("T", " ") }} UTC</time><div>{{ m.body }}</div></li>
+  {% else %}<li>No messages.</li>{% endfor %}
+</ol>
+<p><a href="/admin/reports">Back to reports</a></p>
+{% endblock %}

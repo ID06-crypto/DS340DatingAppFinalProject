@@ -48,6 +48,9 @@ class Account(BaseModel):
     created_at: str
     approved_at: str | None
     approved_by: str | None
+    experiment_opt_out: bool = False
+    notify_on_match: bool = True
+    paused: bool = False
 
 
 class Photo(BaseModel):
@@ -66,6 +69,8 @@ class Impression(BaseModel):
     pool_size: int
     shown_at: str
     rated_at: str | None
+    predicted_score: float | None = None
+    position: int | None = None
 
 
 class Match(BaseModel):
@@ -86,6 +91,15 @@ class Message(BaseModel):
     match_id: str
     sender_id: str
     body: str
+    created_at: str
+
+
+class Survey(BaseModel):
+    survey_id: str
+    user_id: str
+    kind: Literal["session", "post_match"]
+    match_id: str | None
+    score: int
     created_at: str
 
 
@@ -163,6 +177,28 @@ class LiveStore:
             )
         return self.get_account(account_id), True
 
+    def account_for_user(self, user_id: str) -> Account | None:
+        with connect(self.db_path) as conn:
+            row = conn.execute("SELECT * FROM accounts WHERE user_id = ?", (user_id,)).fetchone()
+        return Account.model_validate(dict(row)) if row else None
+
+    def account_for_email(self, email: str) -> Account | None:
+        with connect(self.db_path) as conn:
+            row = conn.execute("SELECT * FROM accounts WHERE email_normalized = ?", (email,)).fetchone()
+        return Account.model_validate(dict(row)) if row else None
+
+    def set_flags(self, account_id: str, **flags: bool) -> None:
+        """Set experiment_opt_out, notify_on_match, or paused."""
+        allowed = {"experiment_opt_out", "notify_on_match", "paused"}
+        if not flags or not set(flags) <= allowed:
+            raise ValueError(f"flags must be among {sorted(allowed)}")
+        assignments = ", ".join(f"{name} = ?" for name in flags)
+        with transaction(self.db_path) as conn:
+            conn.execute(
+                f"UPDATE accounts SET {assignments} WHERE account_id = ?",
+                [int(value) for value in flags.values()] + [account_id],
+            )
+
     def get_account(self, account_id: str) -> Account | None:
         with connect(self.db_path) as conn:
             row = conn.execute("SELECT * FROM accounts WHERE account_id = ?", (account_id,)).fetchone()
@@ -214,17 +250,27 @@ class LiveStore:
             )
 
     def account_for_session(self, session_hash: str) -> Account | None:
+        found = self.session(session_hash)
+        return found[0] if found else None
+
+    def session(self, session_hash: str) -> tuple[Account, datetime] | None:
+        """The account for a session, and when that session started (its sign-in time)."""
         now = to_text(utc_now())
         with transaction(self.db_path) as conn:
             conn.execute("DELETE FROM sessions WHERE expires_at <= ?", (now,))
             row = conn.execute(
                 """
-                SELECT accounts.* FROM sessions JOIN accounts USING (account_id)
+                SELECT accounts.*, sessions.created_at AS session_started
+                FROM sessions JOIN accounts USING (account_id)
                 WHERE session_hash = ?
                 """,
                 (session_hash,),
             ).fetchone()
-        return Account.model_validate(dict(row)) if row else None
+        if row is None:
+            return None
+        data = dict(row)
+        started = datetime.fromisoformat(data.pop("session_started"))
+        return Account.model_validate(data), started
 
     def delete_session(self, session_hash: str) -> None:
         with transaction(self.db_path) as conn:
@@ -284,17 +330,62 @@ class LiveStore:
 
     # Impressions
 
-    def create_impression(self, viewer_id: str, target_id: str, matcher: str, pool_size: int) -> Impression:
+    def create_impression(
+        self,
+        viewer_id: str,
+        target_id: str,
+        matcher: str,
+        pool_size: int,
+        predicted_score: float | None = None,
+        candidate_scores: dict[str, float] | None = None,
+    ) -> Impression:
+        """Record that a profile was shown, as the viewer's next position.
+
+        candidate_scores, if the matcher scored the whole pool, is saved too, so offline
+        evaluation can see what it would have ranked differently.
+        """
         impression_id = new_id()
         with transaction(self.db_path) as conn:
+            position = conn.execute(
+                "SELECT COUNT(*) + 1 FROM impressions WHERE viewer_id = ?", (viewer_id,)
+            ).fetchone()[0]
             conn.execute(
                 """
-                INSERT INTO impressions (impression_id, viewer_id, target_id, matcher, pool_size, shown_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO impressions
+                    (impression_id, viewer_id, target_id, matcher, pool_size, shown_at, predicted_score, position)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (impression_id, viewer_id, target_id, matcher, pool_size, to_text(utc_now())),
+                (impression_id, viewer_id, target_id, matcher, pool_size, to_text(utc_now()), predicted_score, position),
             )
+            if candidate_scores:
+                conn.executemany(
+                    "INSERT INTO impression_candidates (impression_id, candidate_id, predicted_score) VALUES (?, ?, ?)",
+                    [(impression_id, candidate, float(score)) for candidate, score in candidate_scores.items()],
+                )
         return self.get_impression(impression_id)
+
+    def candidate_scores(self, impression_id: str) -> dict[str, float]:
+        with connect(self.db_path) as conn:
+            rows = conn.execute(
+                "SELECT candidate_id, predicted_score FROM impression_candidates WHERE impression_id = ?",
+                (impression_id,),
+            ).fetchall()
+        return {row["candidate_id"]: row["predicted_score"] for row in rows}
+
+    def pending_impression(self, viewer_id: str) -> Impression | None:
+        """The viewer's latest impression that hasn't been rated yet, if any."""
+        with connect(self.db_path) as conn:
+            row = conn.execute(
+                "SELECT * FROM impressions WHERE viewer_id = ? AND rated_at IS NULL ORDER BY shown_at DESC LIMIT 1",
+                (viewer_id,),
+            ).fetchone()
+        return Impression.model_validate(dict(row)) if row else None
+
+    def count_rated(self, viewer_id: str) -> int:
+        with connect(self.db_path) as conn:
+            return conn.execute(
+                "SELECT COUNT(*) FROM impressions WHERE viewer_id = ? AND rated_at IS NOT NULL", (viewer_id,)
+            ).fetchone()[0]
 
     def get_impression(self, impression_id: str) -> Impression | None:
         with connect(self.db_path) as conn:
@@ -372,6 +463,19 @@ class LiveStore:
                 (by, to_text(utc_now()), match_id),
             )
 
+    def matches_for(self, user_id: str) -> list[Match]:
+        """Every match this user has been in, active or not."""
+        with connect(self.db_path) as conn:
+            rows = conn.execute(
+                "SELECT * FROM matches WHERE user_a = ? OR user_b = ? ORDER BY created_at", (user_id, user_id)
+            ).fetchall()
+        return [Match.model_validate(dict(row)) for row in rows]
+
+    def last_message_at(self, match_id: str) -> str | None:
+        with connect(self.db_path) as conn:
+            row = conn.execute("SELECT MAX(created_at) FROM messages WHERE match_id = ?", (match_id,)).fetchone()
+        return row[0]
+
     # Messages
 
     def add_message(self, match_id: str, sender_id: str, body: str) -> Message:
@@ -388,6 +492,13 @@ class LiveStore:
             rows = conn.execute(
                 "SELECT * FROM messages WHERE match_id = ? AND message_id > ? ORDER BY message_id LIMIT ?",
                 (match_id, after, limit),
+            ).fetchall()
+        return [Message.model_validate(dict(row)) for row in rows]
+
+    def messages_sent_by(self, sender_id: str) -> list[Message]:
+        with connect(self.db_path) as conn:
+            rows = conn.execute(
+                "SELECT * FROM messages WHERE sender_id = ? ORDER BY message_id", (sender_id,)
             ).fetchall()
         return [Message.model_validate(dict(row)) for row in rows]
 
@@ -468,6 +579,63 @@ class LiveStore:
                 (by, to_text(utc_now()), report_id),
             )
 
+    # Surveys
+
+    def add_survey(self, user_id: str, kind: str, score: int, match_id: str | None = None) -> Survey:
+        survey_id = new_id()
+        with transaction(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO surveys (survey_id, user_id, kind, match_id, score, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (survey_id, user_id, kind, match_id, score, to_text(utc_now())),
+            )
+        return Survey(survey_id=survey_id, user_id=user_id, kind=kind, match_id=match_id, score=score, created_at=to_text(utc_now()))
+
+    def record_survey_prompt(self, user_id: str, kind: str, match_id: str | None = None) -> None:
+        with transaction(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO survey_prompts (user_id, kind, match_id, shown_at) VALUES (?, ?, ?, ?)",
+                (user_id, kind, match_id, to_text(utc_now())),
+            )
+
+    def last_survey_prompt(self, user_id: str, kind: str, match_id: str | None = None) -> datetime | None:
+        with connect(self.db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT MAX(shown_at) FROM survey_prompts
+                WHERE user_id = ? AND kind = ? AND (? IS NULL OR match_id = ?)
+                """,
+                (user_id, kind, match_id, match_id),
+            ).fetchone()
+        return datetime.fromisoformat(row[0]) if row[0] else None
+
+    # Settings and events
+
+    def get_setting(self, key: str, default: Any = None) -> Any:
+        with connect(self.db_path) as conn:
+            row = conn.execute("SELECT value FROM app_settings WHERE key = ?", (key,)).fetchone()
+        return json.loads(row["value"]) if row else default
+
+    def set_setting(self, key: str, value: Any) -> None:
+        with transaction(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+                (key, json.dumps(value, sort_keys=True)),
+            )
+
+    def record_event(self, kind: str) -> None:
+        """Count something that went wrong, such as a failed email. Stores no personal data."""
+        with transaction(self.db_path) as conn:
+            conn.execute("INSERT INTO app_events (kind, created_at) VALUES (?, ?)", (kind, to_text(utc_now())))
+
+    def count_events(self) -> dict[str, int]:
+        with connect(self.db_path) as conn:
+            rows = conn.execute("SELECT kind, COUNT(*) FROM app_events GROUP BY kind").fetchall()
+        return {row[0]: row[1] for row in rows}
+
+    def count_live_ratings(self) -> int:
+        with connect(self.db_path) as conn:
+            return conn.execute("SELECT COUNT(*) FROM ratings WHERE run_id = 'live'").fetchone()[0]
+
     # Audit log
 
     def audit(self, actor_account_id: str, action: str, target: str | None, details: dict[str, Any]) -> None:
@@ -477,9 +645,19 @@ class LiveStore:
                 (actor_account_id, action, target, json.dumps(details, sort_keys=True), to_text(utc_now())),
             )
 
-    def audit_entries(self) -> list[dict[str, Any]]:
+    def audit_entries(self, action: str | None = None, actor: str | None = None, limit: int | None = None) -> list[dict[str, Any]]:
+        """Audit rows, oldest first, optionally filtered. With limit, the newest ones."""
         with connect(self.db_path) as conn:
-            rows = conn.execute("SELECT * FROM audit_log ORDER BY id").fetchall()
+            rows = conn.execute(
+                """
+                SELECT * FROM (
+                    SELECT * FROM audit_log
+                    WHERE (? IS NULL OR action = ?) AND (? IS NULL OR actor_account_id = ?)
+                    ORDER BY id DESC LIMIT ?
+                ) ORDER BY id
+                """,
+                (action, action, actor, actor, limit if limit is not None else -1),
+            ).fetchall()
         return [dict(row) for row in rows]
 
     def anonymize_audit(self, identifiers: list[str]) -> None:

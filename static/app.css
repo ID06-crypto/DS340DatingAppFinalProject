@@ -1,0 +1,60 @@
+/* Layered on Pico's classless styles. Mobile first: designed for a 375px-wide screen. */
+:root { --nav-height: 4rem; }
+body > main { max-width: 36rem; margin: 0 auto; padding: 1rem 1rem calc(var(--nav-height) + 1.5rem); }
+body > main.wide { max-width: 64rem; }
+
+.skip-link { position: absolute; left: -999px; top: 0; }
+.skip-link:focus { left: 1rem; top: 1rem; z-index: 10; background: #fff; color: #000; padding: .5rem 1rem; }
+
+/* Visible focus everywhere, never colour alone. */
+:focus-visible { outline: 3px solid #1d4ed8; outline-offset: 2px; }
+
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* Bottom navigation: three plain links, no counts or badges. */
+nav.bottom { position: fixed; bottom: 0; left: 0; right: 0; height: var(--nav-height); background: #fff; border-top: 1px solid #c8ccd2; z-index: 5; }
+nav.bottom ul { display: flex; justify-content: space-around; align-items: center; height: 100%; margin: 0; padding: 0; list-style: none; }
+nav.bottom li { margin: 0; padding: 0; list-style: none; }
+nav.bottom a { display: block; padding: .75rem 1rem; color: #1f2937; text-decoration: none; }
+nav.bottom a[aria-current="page"] { font-weight: 700; text-decoration: underline; text-underline-offset: .3em; }
+
+/* Photo carousel: CSS scroll snap, no JavaScript. */
+.carousel { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; gap: .5rem; border-radius: .5rem; }
+.carousel img { flex: 0 0 100%; width: 100%; aspect-ratio: 3 / 4; object-fit: cover; scroll-snap-align: center; border-radius: .5rem; }
+.photo-count { font-size: .875rem; color: #374151; }
+
+dl.facts { display: grid; grid-template-columns: max-content 1fr; gap: .25rem 1rem; }
+dl.facts dt { font-weight: 600; }
+dl.facts dd { margin: 0; }
+
+/* Rating slider. It has no starting value: the thumb stays hidden until it's touched. */
+.rating input[type="range"] { width: 100%; }
+.rating input[type="range"].untouched::-webkit-slider-thumb { opacity: 0; }
+.rating input[type="range"].untouched::-moz-range-thumb { opacity: 0; }
+.anchors { display: flex; justify-content: space-between; font-size: .875rem; color: #374151; margin-top: -.5rem; }
+.anchors span { max-width: 33%; }
+.anchors span:nth-child(2) { text-align: center; }
+.anchors span:last-child { text-align: right; }
+.people-left { color: #374151; }
+
+.notice { border: 2px solid #1d4ed8; border-radius: .5rem; padding: .75rem 1rem; }
+.error { color: #9b1c1c; font-weight: 600; }
+.error::before { content: "Error: "; }
+
+.messages { list-style: none; padding: 0; }
+.messages li { list-style: none; margin-bottom: .75rem; }
+.messages .who { font-weight: 600; }
+.messages time { font-size: .8rem; color: #4b5563; }
+
+.photo-grid { list-style: none; padding: 0; }
+.photo-grid li { list-style: none; display: flex; gap: 1rem; align-items: center; margin-bottom: 1rem; }
+.photo-grid img { width: 6rem; aspect-ratio: 3 / 4; object-fit: cover; border-radius: .25rem; }
+.inline-forms { display: flex; flex-wrap: wrap; gap: .5rem; }
+.inline-forms form { margin: 0; }
+
+table { font-size: .9rem; }
+.chart-box { position: relative; height: 18rem; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}

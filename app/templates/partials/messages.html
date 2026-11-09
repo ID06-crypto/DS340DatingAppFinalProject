@@ -1,0 +1,13 @@
+{% if messages %}
+<ol class="messages">
+  {% for m in messages %}
+  <li>
+    <span class="who">{% if m.sender_id == me %}You{% else %}{{ name }}{% endif %}</span>
+    <time datetime="{{ m.created_at }}">{{ m.created_at[:16].replace("T", " ") }} UTC</time>
+    <div>{{ m.body }}</div>
+  </li>
+  {% endfor %}
+</ol>
+{% else %}
+<p>No messages yet. Say hello.</p>
+{% endif %}

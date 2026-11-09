@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Approvals{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block content %}
+{% include "admin/_nav.html" %}
+<h1>Approvals</h1>
+{% for status, heading in [("pending", "Waiting for review"), ("suspended", "Suspended"), ("rejected", "Rejected")] %}
+<h2>{{ heading }}</h2>
+{% for item in lists[status] %}
+<article>
+  <h3>{{ item.account.email_normalized }}</h3>
+  <p>Joined {{ item.account.created_at[:10] }}. Consent: {% if item.consent_current %}given{% else %}not given{% endif %}.{% if item.missing %} Missing: {{ item.missing|join(", ") }}.{% endif %}</p>
+  {% if item.person %}
+  {% set p = item.person.profile %}
+  <p>{{ p.name }}, {{ p.age }}, {{ p.gender }}. {{ p.school }}, {{ p.major }}. {{ p.job }}. Interests: {{ p.interests|join(", ") }}.</p>
+  <div class="carousel" role="region" aria-label="Photos of {{ p.name }}" tabindex="0">
+    {% for photo_id in item.person.photo_ids %}<img src="/photos/{{ photo_id }}" alt="Photo {{ loop.index }} of {{ item.person.photo_ids|length }} of {{ first_name(p.name) }}">{% endfor %}
+  </div>
+  {% endif %}
+  <div class="inline-forms">
+    {% if status != "approved" %}
+    <form method="post" action="/admin/approvals/{{ item.account.account_id }}/approve">{% include "partials/csrf.html" %}<button type="submit">Approve</button></form>
+    {% endif %}
+    {% for action, label in [("reject", "Reject"), ("suspend", "Suspend")] %}{% if (action == "reject" and status != "rejected") or (action == "suspend" and status != "suspended") %}
+    <form method="post" action="/admin/approvals/{{ item.account.account_id }}/{{ action }}">
+      {% include "partials/csrf.html" %}
+      <label for="reason-{{ action }}-{{ item.account.account_id }}">Reason</label>
+      <input id="reason-{{ action }}-{{ item.account.account_id }}" name="reason" maxlength="500">
+      <button type="submit">{{ label }}</button>
+    </form>
+    {% endif %}{% endfor %}
+  </div>
+</article>
+{% else %}
+<p>None.</p>
+{% endfor %}
+{% endfor %}
+{% endblock %}

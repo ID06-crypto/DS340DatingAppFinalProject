@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Controls{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block content %}
+{% include "admin/_nav.html" %}
+<h1>Controls</h1>
+<form method="post" action="/admin/controls">
+  {% include "partials/csrf.html" %}
+  <fieldset>
+    <legend>Algorithms</legend>
+    <p>Each impression picks an enabled algorithm at random, in proportion to its weight. Opted-out users always get {{ default_matcher }}.</p>
+    {% for name, description, weight in matchers %}
+    <div>
+      <label><input type="checkbox" name="enabled_{{ name }}" value="yes" {% if weight > 0 %}checked{% endif %}> {{ name }}</label>
+      <small>{{ description }}</small>
+      <label for="weight_{{ name }}">Weight for {{ name }}</label>
+      <input id="weight_{{ name }}" name="weight_{{ name }}" type="number" min="0" step="0.1" value="{{ weight if weight > 0 else 1 }}">
+    </div>
+    {% endfor %}
+  </fieldset>
+  <label><input type="checkbox" name="signups_paused" value="yes" {% if controls.signups_paused %}checked{% endif %}> Pause new signups</label>
+  <label><input type="checkbox" name="feed_paused" value="yes" {% if controls.feed_paused %}checked{% endif %}> Kill switch: turn off Discover for everyone, with a maintenance message</label>
+  <button type="submit">Save</button>
+</form>
+<h2>Match threshold</h2>
+<p>Two people match when both rate each other {{ threshold }} or higher.</p>
+{% if threshold_locked %}<p class="notice">Locked for experiment integrity, because live ratings exist. Changing it needs the MATCH_THRESHOLD environment variable and a restart, and is written to the audit log at startup.</p>{% endif %}
+{% endblock %}

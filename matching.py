@@ -61,9 +61,13 @@ class PublicView:
 
 
 class Matcher(ABC):
-    """Chooses which profile each simulated user sees next."""
+    """Chooses which profile each user sees next.
+
+    description is plain language, shown to users on the transparency page.
+    """
 
     name: str
+    description: str = "No description yet."
 
     @abstractmethod
     def next_profile(self, user_id: str, view: PublicView) -> str | None:
@@ -71,6 +75,16 @@ class Matcher(ABC):
 
     def observe(self, rating: Rating) -> None:
         """Called after every saved rating."""
+
+    def score_candidates(
+        self, user_id: str, view: PublicView, candidates: list[str]
+    ) -> dict[str, float] | None:
+        """Optionally score every candidate in the pool, from 0 (unlikely to like) to 1.
+
+        Scores are logged with each impression, so offline evaluation can compare them
+        with the ratings people give. Matchers that don't predict return None.
+        """
+        return None
 
 
 class RandomMatcher(Matcher):
@@ -81,6 +95,10 @@ class RandomMatcher(Matcher):
     """
 
     name = "random"
+    description = (
+        "Shows you someone at random from everyone you're eligible to see. It's the "
+        "baseline the other algorithms are compared against."
+    )
 
     def __init__(self, rng: random.Random) -> None:
         self._rng = rng
