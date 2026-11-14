@@ -222,7 +222,8 @@ async def _save_profile(request: Request, account: Account, s: Services, editing
             errors["name"] = error.message
     if errors:
         action = "/me/profile" if editing else "/onboarding/profile"
-        return render(request, "profile_form.html", {"values": values, "errors": errors, "action": action, "editing": editing}, 422)
+        shown_as = s.manager.get_profile(account.user_id).name if editing and account.user_id else None
+        return render(request, "profile_form.html", {"values": values, "errors": errors, "action": action, "editing": editing, "shown_as": shown_as}, 422)
     return redirect(request, "/me" if editing else "/onboarding/preferences")
 
 
@@ -433,11 +434,11 @@ def unmatch(match_id: str, request: Request, account: Account = Depends(page_mem
 
 
 @router.get("/me")
-def me(request: Request, account: Account = Depends(page_member)) -> Response:
+def me(request: Request, account: Account = Depends(page_member), s: Services = Depends(services)) -> Response:
     notice = {"saved": "Settings saved.", "paused": "Your account is paused.", "unpaused": "Your account is active again."}.get(
         request.query_params.get("done", "")
     )
-    return render(request, "me.html", {"notice": notice, "nav": "me"})
+    return render(request, "me.html", {"notice": notice, "nav": "me", "shown_as": s.manager.get_profile(account.user_id).name})
 
 
 @router.get("/me/profile")
@@ -445,7 +446,8 @@ def me_profile(request: Request, account: Account = Depends(page_member), s: Ser
     profile = s.manager.get_profile(account.user_id)
     values = {k: getattr(profile, k) or "" for k in PROFILE_TEXT_FIELDS}
     values.update(age=profile.age, height_cm=profile.height_cm, interests=", ".join(profile.interests), clubs=", ".join(profile.clubs))
-    return render(request, "profile_form.html", {"values": values, "errors": {}, "action": "/me/profile", "editing": True, "nav": "me"})
+    values["name"] = s.live.real_name(account.user_id) or profile.name  # The profile holds the display name.
+    return render(request, "profile_form.html", {"values": values, "errors": {}, "action": "/me/profile", "editing": True, "nav": "me", "shown_as": profile.name})
 
 
 @router.post("/me/profile", dependencies=[csrf])

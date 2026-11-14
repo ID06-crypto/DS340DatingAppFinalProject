@@ -71,6 +71,7 @@ def create_app(
     )
     services.consent_text()  # Fail at startup, not on first use, if the text is missing.
     services.initialize_controls()
+    services.give_display_names()
 
     app = FastAPI(title="Matching study", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.services = services

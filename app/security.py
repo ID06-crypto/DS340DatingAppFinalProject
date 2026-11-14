@@ -1,5 +1,7 @@
 """Email normalization, tokens, CSRF checks, security headers, and log redaction."""
 
+import hashlib
+import hmac
 import logging
 import re
 import secrets
@@ -47,6 +49,41 @@ def normalize_email(raw: str, allowed_domains: Iterable[str] | None = None) -> s
     if allowed and domain not in allowed:
         return None
     return f"{local}@{domain}"
+
+
+# Admin passwords: scrypt from the standard library, with a random salt per password.
+# Stored as "scrypt$n$r$p$salt$hash", so the cost can be raised later without breaking old hashes.
+
+SCRYPT_N, SCRYPT_R, SCRYPT_P = 2**14, 8, 1
+MIN_PASSWORD_LENGTH = 8
+MAX_PASSWORD_LENGTH = 200
+
+
+def hash_password(password: str) -> str:
+    salt = secrets.token_bytes(16)
+    digest = hashlib.scrypt(password.encode(), salt=salt, n=SCRYPT_N, r=SCRYPT_R, p=SCRYPT_P, dklen=32)
+    return f"scrypt${SCRYPT_N}${SCRYPT_R}${SCRYPT_P}${salt.hex()}${digest.hex()}"
+
+
+def verify_password(password: str, stored: str | None) -> bool:
+    """Whether the password matches. With nothing stored, it still does the work of one
+    check, so a wrong email takes as long as a wrong password."""
+    try:
+        _, n, r, p, salt, expected = (stored or "").split("$")
+        n_, r_, p_, salt_bytes, expected_bytes = int(n), int(r), int(p), bytes.fromhex(salt), bytes.fromhex(expected)
+    except ValueError:
+        n_, r_, p_, salt_bytes, expected_bytes = SCRYPT_N, SCRYPT_R, SCRYPT_P, b"\0" * 16, b""
+    digest = hashlib.scrypt(password.encode()[:1024], salt=salt_bytes, n=n_, r=r_, p=p_, dklen=32)
+    return bool(expected_bytes) and hmac.compare_digest(digest, expected_bytes)
+
+
+def password_problem(password: str) -> str | None:
+    """Why a new password isn't allowed, or None."""
+    if len(password) < MIN_PASSWORD_LENGTH:
+        return f"Use at least {MIN_PASSWORD_LENGTH} characters."
+    if len(password) > MAX_PASSWORD_LENGTH:
+        return f"Use at most {MAX_PASSWORD_LENGTH} characters."
+    return None
 
 
 def new_secret() -> str:

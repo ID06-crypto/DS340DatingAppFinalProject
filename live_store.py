@@ -214,6 +214,65 @@ class LiveStore:
                 (version, to_text(utc_now()), account_id),
             )
 
+    def make_admin(self, account_id: str, by: str) -> None:
+        """Give an account the admin role, approved."""
+        now = to_text(utc_now())
+        with transaction(self.db_path) as conn:
+            conn.execute(
+                "UPDATE accounts SET role = 'admin', status = 'approved', approved_at = COALESCE(approved_at, ?), approved_by = COALESCE(approved_by, ?) WHERE account_id = ?",
+                (now, by, account_id),
+            )
+
+    # Admin passwords
+
+    def password_hash(self, account_id: str) -> str | None:
+        with connect(self.db_path) as conn:
+            row = conn.execute("SELECT password_hash FROM admin_passwords WHERE account_id = ?", (account_id,)).fetchone()
+        return row["password_hash"] if row else None
+
+    def set_password_hash(self, account_id: str, password_hash: str) -> None:
+        with transaction(self.db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO admin_passwords (account_id, password_hash, updated_at) VALUES (?, ?, ?)
+                ON CONFLICT (account_id) DO UPDATE SET password_hash = excluded.password_hash, updated_at = excluded.updated_at
+                """,
+                (account_id, password_hash, to_text(utc_now())),
+            )
+
+    # Real names. Profiles hold the assigned display name.
+
+    def real_name(self, user_id: str) -> str | None:
+        with connect(self.db_path) as conn:
+            row = conn.execute("SELECT real_name FROM private_names WHERE user_id = ?", (user_id,)).fetchone()
+        return row["real_name"] if row else None
+
+    def set_real_name(self, user_id: str, real_name: str) -> None:
+        with transaction(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO private_names (user_id, real_name) VALUES (?, ?) ON CONFLICT (user_id) DO UPDATE SET real_name = excluded.real_name",
+                (user_id, real_name),
+            )
+
+    def live_profiles_without_real_name(self) -> list[str]:
+        """Real people's profiles made before display names existed."""
+        with connect(self.db_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT a.user_id FROM accounts a JOIN profiles p ON p.user_id = a.user_id
+                WHERE p.agent = 0 AND NOT EXISTS (SELECT 1 FROM private_names n WHERE n.user_id = a.user_id)
+                ORDER BY a.created_at
+                """
+            ).fetchall()
+        return [row["user_id"] for row in rows]
+
+    def display_names_in_use(self) -> set[str]:
+        with connect(self.db_path) as conn:
+            rows = conn.execute(
+                "SELECT p.name FROM profiles p JOIN accounts a ON a.user_id = p.user_id WHERE p.agent = 0"
+            ).fetchall()
+        return {row["name"] for row in rows}
+
     def link_profile(self, account_id: str, user_id: str) -> None:
         with transaction(self.db_path) as conn:
             conn.execute("UPDATE accounts SET user_id = ? WHERE account_id = ?", (user_id, account_id))

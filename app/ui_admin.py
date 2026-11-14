@@ -16,6 +16,7 @@ from app.actions import ActionError
 from app.deps import services
 from app.services import Services
 from app.web import page_admin, page_admin_any, redirect, render, require_csrf
+from app.routes_auth import set_session_cookie
 from live_store import Account, utc_now
 
 router = APIRouter(prefix="/ui/admin")
@@ -24,6 +25,45 @@ csrf = Depends(require_csrf)
 
 def _page(request: Request, template: str, context: dict, status: int = 200) -> Response:
     return render(request, f"admin/{template}", {"nav": "admin", **context}, status)
+
+
+@router.get("/login")
+def password_login_page(request: Request) -> Response:
+    return _page(request, "login.html", {"error": None, "email": ""})
+
+
+@router.post("/login")
+async def password_login(request: Request, s: Services = Depends(services)) -> Response:
+    form = await request.form()
+    email = str(form.get("email", ""))[:320]
+    try:
+        account, session_id = actions.password_sign_in(s, email, str(form.get("password", "")), request.client.host if request.client else "unknown")
+    except ActionError as error:
+        return _page(request, "login.html", {"error": error.message, "email": email}, error.status)
+    destination = "/admin" if account.consent_version == s.settings.consent_version else "/onboarding/consent"
+    response = redirect(request, destination)
+    set_session_cookie(response, session_id, s)
+    return response
+
+
+@router.get("/password")
+def password_page(request: Request, admin: Account = Depends(page_admin), s: Services = Depends(services)) -> Response:
+    has_password = s.live.password_hash(admin.account_id) is not None
+    return _page(request, "password.html", {"error": None, "done": request.query_params.get("done") == "1", "has_password": has_password})
+
+
+@router.post("/password", dependencies=[csrf])
+async def password_save(request: Request, admin: Account = Depends(page_admin), s: Services = Depends(services)) -> Response:
+    form = await request.form()
+    new, again = str(form.get("new_password", "")), str(form.get("new_password_again", ""))
+    has_password = s.live.password_hash(admin.account_id) is not None
+    try:
+        if new != again:
+            raise ActionError(422, "The two new passwords don't match.")
+        actions.set_admin_password(s, admin, str(form.get("current_password", "")), new)
+    except ActionError as error:
+        return _page(request, "password.html", {"error": error.message, "done": False, "has_password": has_password}, error.status)
+    return redirect(request, "/admin/password?done=1")
 
 
 @router.get("/step-up")

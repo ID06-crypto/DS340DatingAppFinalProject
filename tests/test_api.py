@@ -641,7 +641,9 @@ def test_matches_show_the_other_persons_public_profile(env: Env) -> None:
     a, a_id, b, b_id, match_id = matched_pair(env)
     (match,) = a.get("/matches").json()
     assert match["profile"]["user_id"] == b_id
-    assert match["profile"]["name"] == "Bea"
+    # Others see the assigned display name, never the real one.
+    assert match["profile"]["name"] == env.s.manager.get_profile(b_id).name != "Bea"
+    assert "Bea" not in a.get("/matches").text
 
 
 def test_unmatch_removes_the_match_for_both(env: Env) -> None:

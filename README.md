@@ -353,7 +353,7 @@ Open http://localhost:8000 in a browser, enter an email (`dev.user01@bu.edu` for
 | Public | `/`, which explains the project and takes an email, and `/transparency`, which covers what's collected, who sees what, the algorithms, and these rules |
 | Onboarding, in order | Consent, profile, who you'd like to meet, then "under review" until an admin approves you |
 | Discover | One profile at a time, with a 1 to 10 slider and number box and no default value. Shows how many people are left. Report and block are in a menu. Everyone eventually sees every other approved participant, whatever their gender. Asking again shows the same person, so nobody can be skipped, and someone who paused while on screen comes back once they unpause. |
-| Matches | Each match's first name and the date you matched. There's no in-app messaging. Unmatch, block, and report are in a menu. |
+| Matches | Each match's display name and the date you matched. There's no in-app messaging. Unmatch, block, and report are in a menu. |
 | Me | Edit your profile and preferences, see who you've blocked, set match emails, opt out of the experiment, pause, download your data, or delete your account |
 | Admin | Overview, approvals, users, reports, algorithm comparison, controls, audit log, and export. Each needs a sign-in from the last `ADMIN_STEP_UP_MINUTES`. |
 
@@ -376,6 +376,10 @@ The point of the live study is a true record of how much each participant likes 
 **Comparing a model.** Predict a score from 0 to 1 for each `(rater_id, target_id)` in `scores.csv` and compare, for example with mean absolute error, rank correlation within each rater, or precision at k. A pair is "liked" at `(POSITIVE_THRESHOLD - 1) / 9` or higher, and "mutual" when both directions are. Matchers that score candidates in the app also save every prediction they made, in the `impression_candidates` table.
 
 **Deleted accounts.** Deleting an account removes its ratings from the database and from later downloads, as the consent form promises. Snapshots saved earlier still hold that person's pseudonymous ratings, so delete or regenerate old snapshots if someone asks for their data to be removed.
+
+**Display names.** Nobody sees anyone's real name. When someone creates a profile, the app gives them a random first name from the list for their gender in `app/fake_names.py` (nonbinary participants get one from both lists), avoiding names already in use until a list runs out. The profile's `name` holds that display name, so every page, the matching algorithms, and the exports only ever see it. The real name is kept in the `private_names` table, and only the person (on Me and Edit profile, and in their data download) and admins (on approvals and `/admin/accounts`) see it. Changing gender gives a new name from the new list. People who joined before this existed get a name when the server starts.
+
+**Admin passwords.** Admins can sign in at `/admin/login` with a password, as well as with an email link. Set one with `python scripts/set_admin_password.py someone@bu.edu`, which asks for it twice, creates the account if needed, and makes it an approved admin. Admins change their own password on Admin → Password, which needs the current one. Passwords are stored only as scrypt hashes (`admin_passwords` table), must be at least 8 characters, and wrong attempts are limited to 5 per email and 20 per address every 15 minutes. Every sign-in and change is audited.
 
 **Opting out:** users who opt out always get `DEFAULT_MATCHER`, and their data is left out of all analytics and exports. **Pausing** hides a user from everyone's pool without deleting anything.
 
@@ -459,8 +463,8 @@ People rate from 1 to 10. Ratings are stored on the same 0 to 1 scale as Jev's, 
 | --- | --- |
 | **Anyone** | Nothing except the consent text. Requesting a link gives the same reply for any address. |
 | **A signed-in user** | Their own email, profile, preferences, and approval status, through `/me`. |
-| **Other approved users** | Your public profile (first name only), but only once you're in their pool, have been shown to them, or have matched with them, and never if either of you has blocked the other. They never see your email, preferences, ratings, or whether you rated them, unless you match. |
-| **Your match** | Your first name and public profile in their Matches list. There's no in-app messaging. |
+| **Other approved users** | Your public profile, under your assigned display name, never your real name, but only once you're in their pool, have been shown to them, or have matched with them, and never if either of you has blocked the other. They never see your email, preferences, ratings, or whether you rated them, unless you match. |
+| **Your match** | Your display name and public profile in their Matches list. There's no in-app messaging. |
 | **Admins** | Emails and profiles in the approval queue, and reports. On the Users page, every score between participants who haven't opted out, with people as codes (W01, M07), not names. Each view is audited. |
 | **Matchers** | Public profiles, this run's ratings, and the eligible pool's user IDs. Never preferences, emails, or personas. |
 

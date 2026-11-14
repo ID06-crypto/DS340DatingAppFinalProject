@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from app.security import new_secret, normalize_email
+from app.security import hash_password, new_secret, normalize_email, password_problem, verify_password
 from app.services import Services
 from live_store import Account, Impression, Match, Report, sha256, utc_now
 from matching import PublicView
@@ -74,6 +74,45 @@ def sign_in(s: Services, token: str) -> tuple[Account, str]:
     return account, session_id
 
 
+WRONG_PASSWORD = "That email and password don't match an administrator account."
+
+
+def password_sign_in(s: Services, raw_email: str, password: str, client_ip: str) -> tuple[Account, str]:
+    """Sign an admin in with their password. Only admins with a password set can.
+
+    Every failure gives the same message, and takes about as long, so it doesn't reveal
+    which emails are admins. Wrong attempts are limited per email and per address.
+    """
+    if not s.login_per_ip.allow(client_ip):
+        raise ActionError(429, "Too many attempts. Wait 15 minutes and try again.")
+    email = normalize_email(raw_email, s.settings.allowed_email_domains)
+    if email is not None and not s.password_per_email.allow(email):
+        raise ActionError(429, "Too many attempts. Wait 15 minutes and try again.")
+    account = s.live.account_for_email(email) if email else None
+    stored = s.live.password_hash(account.account_id) if account else None
+    matches = verify_password(password, stored)
+    if not matches or account is None or account.role != "admin" or account.status != "approved":
+        raise ActionError(401, WRONG_PASSWORD)
+    session_id = new_secret()
+    s.live.create_session(sha256(session_id), account.account_id, utc_now() + timedelta(days=s.settings.session_days))
+    s.live.audit(account.account_id, "password_sign_in", None, {})
+    return account, session_id
+
+
+def set_admin_password(s: Services, admin: Account, current: str | None, new: str) -> None:
+    """Set or change an admin's password. Changing one needs the current password."""
+    if admin.role != "admin":
+        raise ActionError(403, "Only administrators have passwords.")
+    stored = s.live.password_hash(admin.account_id)
+    if stored is not None and not verify_password(current or "", stored):
+        raise ActionError(403, "Your current password is wrong.")
+    problem = password_problem(new)
+    if problem:
+        raise ActionError(422, problem)
+    s.live.set_password_hash(admin.account_id, hash_password(new))
+    s.live.audit(admin.account_id, "password_change", admin.account_id, {})
+
+
 def give_consent(s: Services, account: Account, version: str) -> None:
     if version != s.settings.consent_version:
         raise ActionError(409, f"The current consent version is {s.settings.consent_version}")
@@ -93,13 +132,32 @@ def create_profile(s: Services, account: Account, fields: dict[str, Any]) -> str
     """Create the caller's profile. The server sets user_id and agent, never the client."""
     if account.user_id is not None:
         raise ActionError(409, "You already have a profile. Use PUT to edit it.")
-    profile = s.manager.add_profile({**fields, "agent": False})
+    # Others see an assigned display name. The real name is kept privately.
+    real_name = str(fields.get("name", "")).strip()
+    if not real_name:
+        raise ActionError(422, "Enter your name.")
+    display = s.pick_display_name(str(fields.get("gender", "")))
+    profile = s.manager.add_profile({**fields, "name": display, "agent": False})
+    s.live.set_real_name(profile.user_id, real_name)
     s.live.link_profile(account.account_id, profile.user_id)
     return profile.user_id
 
 
 def edit_profile(s: Services, account: Account, changes: dict[str, Any]) -> None:
-    s.manager.edit_profile(require_profile(account), **changes)
+    """Edit the caller's profile. A new name is their private real name. Changing gender
+    gives them a new display name from that gender's list."""
+    user_id = require_profile(account)
+    changes = dict(changes)
+    real_name = changes.pop("name", None)
+    current = s.manager.get_profile(user_id)
+    if "gender" in changes and changes["gender"] != current.gender:
+        changes["name"] = s.pick_display_name(str(changes["gender"]))
+    if changes:
+        s.manager.edit_profile(user_id, **changes)
+    if real_name is not None:
+        if not str(real_name).strip():
+            raise ActionError(422, "Enter your name.")
+        s.live.set_real_name(user_id, str(real_name).strip())
 
 
 def set_preferences(s: Services, account: Account, interested_in: list[str] | str) -> frozenset[str]:
@@ -384,7 +442,7 @@ def export_my_data(s: Services, account: Account) -> dict[str, Any]:
     """Everything about the caller, and nothing about anyone else beyond their user ids."""
     user_id = account.user_id
     preferences = s.manager.get_preferences(user_id) if user_id else None
-    profile = s.manager.get_profile(user_id).model_dump(exclude={"agent"}) if user_id else None
+    profile = s.public_profile(user_id, own=True)["profile"] if user_id else None
     return {
         "account": {
             "email": account.email_normalized,

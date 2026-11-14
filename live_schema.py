@@ -131,6 +131,22 @@ LIVE_SCHEMA = (
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_survey_prompts_user ON survey_prompts (user_id, kind)",
+    # A participant's real name. Profiles hold an assigned display name, which is what
+    # everyone else, and every matcher, sees. Only the person and admins see this one.
+    """
+    CREATE TABLE IF NOT EXISTS private_names (
+        user_id   TEXT PRIMARY KEY REFERENCES profiles (user_id) ON DELETE CASCADE,
+        real_name TEXT NOT NULL
+    )
+    """,
+    # Only admins can have passwords, stored as scrypt hashes. Everyone else uses links.
+    """
+    CREATE TABLE IF NOT EXISTS admin_passwords (
+        account_id    TEXT PRIMARY KEY REFERENCES accounts (account_id) ON DELETE CASCADE,
+        password_hash TEXT NOT NULL,
+        updated_at    TEXT NOT NULL
+    )
+    """,
     """
     CREATE TABLE IF NOT EXISTS app_settings (
         key   TEXT PRIMARY KEY,

@@ -3,6 +3,7 @@
 {% block content %}
 <h1>Me</h1>
 {% if notice %}<p class="notice" role="status">{{ notice }}</p>{% endif %}
+<p class="lede">Other people see you as <strong>{{ shown_as }}</strong>. Nobody sees your real name.</p>
 <div class="numbered">
 <ul class="plain links">
   <li><a href="/me/profile">Edit profile</a></li>

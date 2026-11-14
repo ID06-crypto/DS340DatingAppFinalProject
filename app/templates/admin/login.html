@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Administrator sign-in{% endblock %}
+{% block content %}
+<p class="kicker">Research team only</p>
+<h1>Administrator sign-in</h1>
+<article>
+  <form method="post" action="/admin/login">
+    {% if error %}<p class="error" role="alert" id="login-error">{{ error }}</p>{% endif %}
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email" autocomplete="username" required value="{{ email }}" {% if error %}aria-describedby="login-error"{% endif %}>
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required>
+    <button type="submit" class="wide">Sign in</button>
+  </form>
+</article>
+<p>Taking part in the study? <a href="/">Sign in with an email link instead</a>.</p>
+{% endblock %}

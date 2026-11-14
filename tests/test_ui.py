@@ -135,7 +135,8 @@ def test_discover_card_has_no_matcher_no_default_and_no_engagement_tricks(env: E
     for word in ("skip", "streak", "badge", "liked you", "online", "typing"):
         assert word not in visible
     assert "1 person left for you right now." in html
-    assert "Jane" in html and "Doe" not in html
+    shown_as = env.s.manager.get_profile(impression.target_id).name
+    assert shown_as in html and "Jane" not in html and "Doe" not in html
 
 
 def test_discover_shows_people_left_and_a_calm_end_state(env: Env) -> None:
@@ -241,7 +242,7 @@ def test_post_match_survey_only_after_three_days_and_once(env: Env) -> None:
     a, a_id = member(env, "a@bu.edu")
     _, b_id = member(env, "b@bu.edu", "woman", ("man",))
     env.s.live.create_match(a_id, b_id)
-    question = "Was your match with Sam worth your time?"
+    question = f"Was your match with {env.s.manager.get_profile(b_id).name} worth your time?"
     assert question not in a.get("/matches").text
     with sqlite3.connect(env.settings.main_db) as conn:
         conn.execute("UPDATE matches SET created_at = ?", (to_text(utc_now().replace(year=2000)),))
@@ -265,7 +266,7 @@ def matched(env: Env) -> tuple[TestClient, str, TestClient, str, str]:
 def test_first_names_only_and_religion_only_when_given(env: Env) -> None:
     a, a_id, b, b_id, match_id = matched(env)
     html = a.get("/matches").text
-    assert "Bea" in html and "Jones" not in html
+    assert env.s.manager.get_profile(b_id).name in html and "Bea" not in html and "Jones" not in html
     for user_id in (a_id, b_id):
         env.s.manager.edit_profile(user_id, religion=None)
     c, c_id = member(env, "c@bu.edu")
@@ -556,3 +557,142 @@ def test_export_truth_script_saves_a_dated_snapshot(env: Env, tmp_path: Path) ->
     assert again.returncode != 0  # It never overwrites a snapshot.
     missing_salt = subprocess.run([sys.executable, str(root / "scripts" / "export_truth.py"), str(tmp_path / "x")], env={**environment, "EXPORT_SALT": ""}, capture_output=True, text=True)
     assert missing_salt.returncode != 0 and "EXPORT_SALT" in missing_salt.stderr
+
+
+# Display names
+
+
+def test_everyone_gets_a_display_name_from_their_genders_list_and_keeps_their_real_name_private(env: Env) -> None:
+    from app.fake_names import MEN, WOMEN
+
+    a, a_id, b, b_id, match_id = matched(env)  # Alex Smith, a man, and Bea Jones, a woman.
+    shown_a, shown_b = env.s.manager.get_profile(a_id).name, env.s.manager.get_profile(b_id).name
+    assert shown_a in MEN and shown_b in WOMEN and shown_a != shown_b
+    assert (env.s.live.real_name(a_id), env.s.live.real_name(b_id)) == ("Alex Smith", "Bea Jones")
+    # Others, and matchers, only ever see the display name.
+    assert "Bea" not in a.get("/matches").text
+    assert PublicView(env.s.manager.store, LIVE_RUN_ID).get_profile(b_id).name == shown_b
+    # The person sees their real name, and what others see.
+    me = env.client()
+    me.cookies.update(b.cookies)
+    profile = me.get("/me/profile").json()["profile"]
+    assert (profile["name"], profile["shown_as"]) == ("Bea Jones", shown_b)
+    assert "Bea Jones" in b.get("/me/profile").text and shown_b in b.get("/me/profile").text
+    data = b.get("/me/data.json").json()
+    assert data["profile"]["name"] == "Bea Jones"
+    # Admins reviewing accounts see real names.
+    accounts = env.admin().get("/admin/accounts", params={"status": "approved"}).json()
+    assert {a["profile"]["name"] for a in accounts if a["profile"]} >= {"Alex Smith", "Bea Jones"}
+
+
+def test_editing_keeps_the_display_name_unless_gender_changes(env: Env) -> None:
+    from app.fake_names import WOMEN
+
+    api, user_id = env.user("x@bu.edu", "man", ["woman"], name="Sam Real")
+    before = env.s.manager.get_profile(user_id).name
+    assert api.put("/me/profile", json=profile_body("Samuel Real", "man")).status_code == 200
+    assert env.s.manager.get_profile(user_id).name == before
+    assert env.s.live.real_name(user_id) == "Samuel Real"
+    assert api.put("/me/profile", json=profile_body("Samuel Real", "woman")).status_code == 200
+    assert env.s.manager.get_profile(user_id).name in WOMEN
+
+
+def test_display_names_avoid_repeats_until_a_list_runs_out() -> None:
+    import random as random_module
+
+    from app.fake_names import MEN, WOMEN, pick_name
+
+    rng = random_module.Random(0)
+    used: set[str] = set()
+    for _ in range(len(MEN)):
+        used.add(pick_name("man", used, rng))
+    assert used == set(MEN)
+    assert pick_name("man", used, rng) in MEN  # Repeats only once every name is taken.
+    assert pick_name("nonbinary", set(), rng) in set(MEN) | set(WOMEN)
+
+
+def test_people_who_joined_before_display_names_get_one_at_startup(env: Env) -> None:
+    from app.fake_names import WOMEN
+
+    _, user_id = env.user("old@bu.edu", "woman", ["man"], name="Olga Old")
+    with sqlite3.connect(env.settings.main_db) as conn:  # As if made by the old code.
+        conn.execute("DELETE FROM private_names WHERE user_id = ?", (user_id,))
+        conn.execute("UPDATE profiles SET name = 'Olga Old' WHERE user_id = ?", (user_id,))
+    create_app(env.settings, email_sender=ConsoleEmailSender(stream=None))
+    assert env.s.live.real_name(user_id) == "Olga Old"
+    assert env.s.manager.get_profile(user_id).name in WOMEN
+
+
+# Admin passwords
+
+
+def set_password_with_script(env: Env, email: str, password: str):
+    import os
+    import subprocess
+    import sys
+
+    root = Path(__file__).resolve().parent.parent
+    environment = {**os.environ, "APP_MAIN_DB": str(env.settings.main_db), "APP_PERSONA_DB": str(env.settings.persona_db)}
+    return subprocess.run([sys.executable, str(root / "scripts" / "set_admin_password.py"), email], input=password + "\n",
+                          env=environment, capture_output=True, text=True)
+
+
+def password_login(env: Env, email: str, password: str):
+    return page(env).post("/admin/login", data={"email": email, "password": password})
+
+
+def test_admins_sign_in_with_a_password_set_by_the_script(env: Env) -> None:
+    done = set_password_with_script(env, "lead@bu.edu", "correct horse")
+    assert done.returncode == 0, done.stderr
+    with sqlite3.connect(env.settings.main_db) as conn:
+        dump = "\n".join(conn.iterdump())
+    assert "correct horse" not in dump and "scrypt$" in dump  # Only a hash is stored.
+    response = password_login(env, "Lead@BU.edu", "correct horse")
+    assert response.status_code == 303 and response.headers["location"] == "/onboarding/consent"
+    browser = page(env)
+    browser.cookies.update(response.cookies)
+    html = browser.get("/onboarding/consent").text
+    browser.post("/onboarding/consent", data={"csrf_token": csrf_of(html), "version": "2", "agree": "yes"})
+    assert browser.get("/admin/users").status_code == 200
+    assert password_login(env, "lead@bu.edu", "correct horse").headers["location"] == "/admin"
+    assert any(e["action"] == "password_sign_in" for e in env.s.live.audit_entries())
+
+
+def test_wrong_passwords_and_non_admins_get_the_same_answer_and_are_limited(env: Env) -> None:
+    set_password_with_script(env, "lead@bu.edu", "correct horse")
+    api, user_id = env.user("user@bu.edu")
+    from app.security import hash_password
+
+    env.s.live.set_password_hash(env.s.live.account_for_email("user@bu.edu").account_id, hash_password("user password"))
+    answers = [
+        password_login(env, "lead@bu.edu", "wrong password"),
+        password_login(env, "nobody@bu.edu", "correct horse"),
+        password_login(env, "user@bu.edu", "user password"),  # Not an admin.
+        password_login(env, "not an email", "x"),
+    ]
+    for response in answers:
+        assert response.status_code == 401
+        assert "match an administrator account" in unescape(response.text)
+        assert "set-cookie" not in response.headers
+    codes = [password_login(env, "lead@bu.edu", "wrong").status_code for _ in range(5)]
+    assert codes[-1] == 429  # Five wrong tries per email in 15 minutes, one already used above.
+
+
+def test_admins_change_their_password_with_the_current_one(env: Env) -> None:
+    set_password_with_script(env, ADMIN_EMAIL, "first password")
+    admin = admin_page(env)
+    html = admin.get("/admin/password").text
+    form = {"csrf_token": csrf_of(html), "current_password": "wrong", "new_password": "second password", "new_password_again": "second password"}
+    assert admin.post("/admin/password", data=form).status_code == 403
+    assert admin.post("/admin/password", data={**form, "current_password": "first password", "new_password_again": "other"}).status_code == 422
+    assert admin.post("/admin/password", data={**form, "current_password": "first password", "new_password": "short", "new_password_again": "short"}).status_code == 422
+    assert admin.post("/admin/password", data={**form, "current_password": "first password"}).headers["location"] == "/admin/password?done=1"
+    assert password_login(env, ADMIN_EMAIL, "first password").status_code == 401
+    assert password_login(env, ADMIN_EMAIL, "second password").status_code == 303
+    assert any(e["action"] == "password_change" for e in env.s.live.audit_entries())
+
+
+def test_the_password_script_refuses_short_passwords(env: Env) -> None:
+    done = set_password_with_script(env, "lead@bu.edu", "short")
+    assert done.returncode != 0 and "at least 8" in done.stderr
+    assert env.s.live.account_for_email("lead@bu.edu") is None

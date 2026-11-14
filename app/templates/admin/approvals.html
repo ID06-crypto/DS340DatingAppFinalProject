@@ -12,7 +12,7 @@
   <p>Joined {{ item.account.created_at[:10] }}. Consent: {% if item.consent_current %}given{% else %}not given{% endif %}.{% if item.missing %} Missing: {{ item.missing|join(", ") }}.{% endif %}</p>
   {% if item.person %}
   {% set p = item.person.profile %}
-  <p>{{ p.name }}, {{ p.age }}, {{ p.gender }}. {{ p.school }}, {{ p.major }}. {{ p.job }}. Interests: {{ p.interests|join(", ") }}.</p>
+  <p>{{ p.name }} (shown to others as {{ p.shown_as }}), {{ p.age }}, {{ p.gender }}. {{ p.school }}, {{ p.major }}. {{ p.job }}. Interests: {{ p.interests|join(", ") }}.</p>
   {% endif %}
   <div class="inline-forms">
     {% if status != "approved" %}

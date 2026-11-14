@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 from app.config import Settings
 from app.emails import EmailSender
+from app.fake_names import pick_name
 from app.ratelimit import RateLimiter
 from live_store import Account, LiveStore
 from manager import ProfileManager
@@ -45,6 +46,8 @@ class Services:
     login_per_ip: RateLimiter
     # Matchers and the rng aren't thread-safe, and requests run on worker threads.
     matcher_lock: threading.Lock = field(default_factory=threading.Lock)
+    # Wrong admin passwords allowed per email in 15 minutes.
+    password_per_email: RateLimiter = field(default_factory=lambda: RateLimiter(5, 900))
 
     def consent_text(self) -> str:
         return (self.settings.consent_dir / f"v{self.settings.consent_version}.md").read_text(encoding="utf-8")
@@ -52,15 +55,34 @@ class Services:
     def public_profile(self, user_id: str, own: bool = False) -> dict[str, Any]:
         """A user's public profile. Never their email, preferences, or ratings.
 
-        Other people see only a first name, and religion only when it's given.
+        The profile's name is the display name the app assigned, which is all anyone else
+        sees, and religion only when it's given. The owner, and admins reviewing them
+        (own=True), also see their real name, with the display name as shown_as.
         """
         profile = self.manager.get_profile(user_id)
         fields = PublicProfile.model_validate(profile.model_dump(exclude={"agent"})).model_dump()
-        if not own:
+        if own:
+            fields["shown_as"] = fields["name"]
+            fields["name"] = self.live.real_name(user_id) or fields["name"]
+        else:
             fields["name"] = first_name(fields["name"])
             if fields["religion"] is None:
                 del fields["religion"]
         return {"profile": fields}
+
+    def pick_display_name(self, gender: str) -> str:
+        with self.matcher_lock:  # The rng isn't thread-safe.
+            return pick_name(gender, self.live.display_names_in_use(), self.rng)
+
+    def give_display_names(self) -> int:
+        """Give real people who joined before display names existed one, keeping their
+        real name privately. Runs at startup, and does nothing once everyone has one."""
+        missing = self.live.live_profiles_without_real_name()
+        for user_id in missing:
+            profile = self.manager.get_profile(user_id)
+            self.live.set_real_name(user_id, profile.name)
+            self.manager.edit_profile(user_id, name=self.pick_display_name(profile.gender))
+        return len(missing)
 
     def controls(self) -> Controls:
         return Controls(

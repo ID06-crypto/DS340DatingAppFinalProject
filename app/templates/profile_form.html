@@ -3,7 +3,11 @@
 {% block content %}
 {% if not editing %}<p class="kicker">Step 2 of 3</p>{% endif %}
 <h1>{% if editing %}Edit your profile{% else %}Your profile{% endif %}</h1>
-<p>Other people see your first name and everything below except your last name.</p>
+{% if shown_as %}
+<p class="notice">Other people see you as <strong>{{ shown_as }}</strong>, a name the study gave you, never your real name. They see everything else below.</p>
+{% else %}
+<p>Other people never see your real name. The study gives you a first name to show instead, and they see everything else below.</p>
+{% endif %}
 <form method="post" action="{{ action }}" novalidate>
   {% include "partials/csrf.html" %}
   {% macro field(name, label, type="text", hint=None, attrs="") %}
