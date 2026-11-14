@@ -19,7 +19,25 @@
   {% endmacro %}
   {{ field("name", "Name", attrs='autocomplete="name" required') }}
   {{ field("age", "Age", "number", attrs='min="18" max="100" required') }}
-  {{ field("height_cm", "Height in centimeters", "number", "For example, 170 cm is about 5 ft 7 in.", 'min="120" max="230" required') }}
+  {% set metric = values.get("height_unit") == "metric" %}
+  <fieldset class="height" {% if errors.get("height_cm") %}aria-invalid="true" aria-describedby="height_cm-error"{% endif %}>
+    <legend>Height</legend>
+    <div class="units">
+      <label><input type="radio" name="height_unit" value="imperial" {% if not metric %}checked{% endif %}> Feet and inches</label>
+      <label><input type="radio" name="height_unit" value="metric" {% if metric %}checked{% endif %}> Centimeters</label>
+    </div>
+    <div class="imperial">
+      <label for="height_ft">Feet</label>
+      <input id="height_ft" name="height_ft" type="number" inputmode="numeric" min="4" max="7" value="{{ values.get('height_ft', '') }}">
+      <label for="height_in">Inches</label>
+      <input id="height_in" name="height_in" type="number" inputmode="numeric" min="0" max="11" value="{{ values.get('height_in', '') }}">
+    </div>
+    <div class="metric">
+      <label for="height_cm">Centimeters</label>
+      <input id="height_cm" name="height_cm" type="number" inputmode="numeric" min="120" max="230" value="{{ values.get('height_cm', '') }}">
+    </div>
+    {% if errors.get("height_cm") %}<p class="error" id="height_cm-error">{{ errors["height_cm"] }}</p>{% endif %}
+  </fieldset>
   <label for="gender">Gender</label>
   <select id="gender" name="gender" required {% if errors.get("gender") %}aria-invalid="true" aria-describedby="gender-error"{% endif %}>
     <option value="">Choose one</option>

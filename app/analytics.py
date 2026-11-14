@@ -72,7 +72,7 @@ _ROWS = """
     JOIN accounts av ON av.user_id = i.viewer_id
     JOIN accounts at ON at.user_id = i.target_id
     LEFT JOIN ratings r ON r.rater_id = i.viewer_id AND r.target_id = i.target_id AND r.run_id = 'live'
-    WHERE av.experiment_opt_out = 0 AND at.experiment_opt_out = 0
+    WHERE av.experiment_opt_out = 0 AND at.experiment_opt_out = 0 AND av.role = 'user' AND at.role = 'user'
     ORDER BY i.viewer_id, i.position
 """
 

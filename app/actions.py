@@ -159,6 +159,8 @@ def require_profile(account: Account) -> str:
 
 def create_profile(s: Services, account: Account, fields: dict[str, Any]) -> str:
     """Create the caller's profile. The server sets user_id and agent, never the client."""
+    if account.role == "admin":
+        raise ActionError(403, "Administrators run the study and don't take part in it.")
     if account.user_id is not None:
         raise ActionError(409, "You already have a profile. Use PUT to edit it.")
     # Others see an assigned display name. The real name is kept privately.

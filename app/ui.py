@@ -14,7 +14,7 @@ from pydantic import ValidationError
 
 from app import actions
 from app.actions import ActionError
-from app.deps import services, signed_in
+from app.deps import is_study_admin, services, signed_in
 from app.routes_auth import set_session_cookie
 from app.security import SESSION_COOKIE
 from app.services import Services, first_name
@@ -46,6 +46,44 @@ DESIGN_RULES = [
 PROFILE_TEXT_FIELDS = ("name", "school", "major", "job", "religion", "gender", "looking_for")
 
 
+HEIGHT_FIELDS = ("height_unit", "height_ft", "height_in", "height_cm")
+CM_PER_INCH = 2.54
+
+
+def feet_and_inches(cm: int) -> tuple[int, int]:
+    inches = round(cm / CM_PER_INCH)
+    return inches // 12, inches % 12
+
+
+def height_values(cm: int) -> dict[str, Any]:
+    """Form values for a stored height, shown in feet and inches by default."""
+    feet, inches = feet_and_inches(cm)
+    return {"height_unit": "imperial", "height_ft": feet, "height_in": inches, "height_cm": cm}
+
+
+def parse_height(values: dict[str, str]) -> tuple[int | None, str | None]:
+    """The height in whole centimeters, which is how it's stored, or an error.
+
+    People choose feet and inches or centimeters. Converting inches to the nearest cm and
+    back always gives the same inches, so nobody's height drifts when they edit."""
+    if values.get("height_unit") == "metric":
+        try:
+            return int(values["height_cm"]), None
+        except ValueError:
+            return None, "Enter your height in whole centimeters."
+    try:
+        feet = int(values["height_ft"])
+        inches = int(values["height_in"] or "0")
+    except ValueError:
+        return None, "Enter whole feet and inches, for example 5 ft 9 in."
+    if not 0 <= inches <= 11:
+        return None, "Inches must be from 0 to 11."
+    cm = round((feet * 12 + inches) * CM_PER_INCH)
+    if not 120 <= cm <= 230:
+        return None, "Enter a height from 4 ft 0 in to 7 ft 6 in."
+    return cm, None
+
+
 def _safe_back(path: str | None, default: str) -> str:
     return path if path and path.startswith("/") and not path.startswith("//") else default
 
@@ -74,10 +112,10 @@ def after_sign_in(s: Services, account: Account) -> str:
     """Where someone goes once signed in."""
     if s.live.must_change_password(account.account_id):
         return "/password"
+    if is_study_admin(account):
+        return "/admin"  # Admins run the study: no consent, profile, or preferences.
     if account.consent_version != s.settings.consent_version:
         return "/onboarding/consent"
-    if account.role == "admin" and account.status == "approved":
-        return "/admin"  # Admins don't need a profile to run the study.
     return next_onboarding_step(s, account) or "/discover"
 
 
@@ -181,6 +219,8 @@ def transparency(request: Request, s: Services = Depends(services)) -> Response:
 
 @router.get("/onboarding/consent")
 def consent_page(request: Request, account: Account = Depends(page_account), s: Services = Depends(services)) -> Response:
+    if is_study_admin(account):
+        return redirect(request, "/admin")  # Admins don't take part, so don't consent.
     return _consent(request, s)
 
 
@@ -240,14 +280,18 @@ async def profile_submit(request: Request, account: Account = Depends(page_conse
 
 async def _save_profile(request: Request, account: Account, s: Services, editing: bool) -> Response:
     form = await request.form()
-    values = {k: str(form.get(k, "")).strip() for k in (*PROFILE_TEXT_FIELDS, "age", "height_cm", "interests", "clubs")}
+    values = {k: str(form.get(k, "")).strip() for k in (*PROFILE_TEXT_FIELDS, "age", *HEIGHT_FIELDS, "interests", "clubs")}
     errors: dict[str, str] = {}
     fields: dict[str, Any] = {k: values[k] for k in PROFILE_TEXT_FIELDS}
-    for number in ("age", "height_cm"):
-        try:
-            fields[number] = int(values[number])
-        except ValueError:
-            errors[number] = "Enter a whole number."
+    try:
+        fields["age"] = int(values["age"])
+    except ValueError:
+        errors["age"] = "Enter a whole number."
+    height, problem = parse_height(values)
+    if problem:
+        errors["height_cm"] = problem
+    else:
+        fields["height_cm"] = height
     fields["interests"] = [item for item in values["interests"].split(",") if item.strip()]
     fields["clubs"] = [item for item in values["clubs"].split(",") if item.strip()]
     for choice in ("gender", "looking_for"):
@@ -496,7 +540,7 @@ def me(request: Request, account: Account = Depends(page_member), s: Services = 
 def me_profile(request: Request, account: Account = Depends(page_member), s: Services = Depends(services)) -> Response:
     profile = s.manager.get_profile(account.user_id)
     values = {k: getattr(profile, k) or "" for k in PROFILE_TEXT_FIELDS}
-    values.update(age=profile.age, height_cm=profile.height_cm, interests=", ".join(profile.interests), clubs=", ".join(profile.clubs))
+    values.update(age=profile.age, **height_values(profile.height_cm), interests=", ".join(profile.interests), clubs=", ".join(profile.clubs))
     values["name"] = s.live.real_name(account.user_id) or profile.name  # The profile holds the display name.
     return render(request, "profile_form.html", {"values": values, "errors": {}, "action": "/me/profile", "editing": True, "nav": "me", "shown_as": profile.name})
 

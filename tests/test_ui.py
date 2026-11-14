@@ -19,7 +19,7 @@ from live_store import to_text, utc_now
 from matching import Matcher, PublicView
 from models import LIVE_RUN_ID
 from raters import build_rater_input
-from test_api import ADMIN_EMAIL, PASSWORD, SITE, Env, profile_body
+from test_api import ADMIN_EMAIL, PASSWORD, SITE, Env, profile_body, shown_ids
 
 HTML = {"Accept": "text/html"}
 
@@ -89,7 +89,7 @@ def test_onboarding_order_and_pending_lock(env: Env) -> None:
     assert browser.get("/discover").headers["location"] == "/onboarding/profile"
     form = {**{k: v for k, v in profile_body("Jane Doe", "woman").items() if not isinstance(v, list)},
             "interests": "Hiking,  chess", "clubs": "", "csrf_token": csrf, "religion": "  "}
-    form["age"] = str(form["age"]); form["height_cm"] = str(form["height_cm"])
+    form["age"] = str(form["age"]); form["height_cm"] = str(form["height_cm"]); form["height_unit"] = "metric"
     assert browser.post("/onboarding/profile", data=form).headers["location"] == "/onboarding/preferences"
     me = api.get("/me").json()["profile"]
     assert me["interests"] == ["hiking", "chess"]
@@ -105,11 +105,11 @@ def test_onboarding_order_and_pending_lock(env: Env) -> None:
 def test_profile_errors_show_inline_in_plain_words(env: Env) -> None:
     browser = page(env, env.consented("jane@bu.edu"))
     csrf = csrf_of(browser.get("/onboarding/profile").text)
-    form = {**{k: str(v) for k, v in profile_body().items() if not isinstance(v, list)}, "interests": "", "clubs": "", "csrf_token": csrf, "age": "17", "height_cm": "abc"}
+    form = {**{k: str(v) for k, v in profile_body().items() if not isinstance(v, list)}, "interests": "", "clubs": "", "csrf_token": csrf, "age": "17", "height_unit": "metric", "height_cm": "abc"}
     response = browser.post("/onboarding/profile", data=form)
     assert response.status_code == 422
     assert 'id="age-error"' in response.text and "18" in response.text
-    assert 'id="height_cm-error"' in response.text and "Enter a whole number." in response.text
+    assert 'id="height_cm-error"' in response.text and "whole centimeters" in response.text
     assert 'id="interests-error"' in response.text
 
 
@@ -493,13 +493,34 @@ def test_users_page_shows_codes_not_names_leaves_out_opted_out_and_is_audited(en
     assert entries and entries[-1]["details"] == '{"people": 2, "ratings": 2}'
 
 
-def test_admins_go_straight_to_admin_after_consent(env: Env) -> None:
+def test_admins_skip_consent_and_never_fill_in_a_profile(env: Env) -> None:
     api = env.login(ADMIN_EMAIL)
     browser = page(env, api)
-    html = browser.get("/onboarding/consent").text
-    response = browser.post("/onboarding/consent", data={"csrf_token": csrf_of(html), "version": "2", "agree": "yes"})
-    assert response.headers["location"] == "/admin"
+    signed_in = browser.post("/login", data={"email": ADMIN_EMAIL, "password": PASSWORD})
+    assert signed_in.headers["location"] == "/admin"
+    for path in ("/onboarding/consent", "/onboarding/profile", "/onboarding/preferences", "/pending", "/discover", "/me"):
+        response = browser.get(path)
+        assert response.status_code == 303 and response.headers["location"] == "/admin", path
     assert browser.get("/admin/users").status_code == 200
+    assert api.post("/me/profile", json=profile_body()).status_code == 403
+    assert api.get("/feed/next").status_code == 403
+
+
+def test_an_admin_with_an_old_profile_is_not_a_participant(env: Env) -> None:
+    """Someone who joined as a participant and was later made an admin keeps their profile
+    row, but nobody is shown it and it's left out of every result."""
+    member(env, "a@bu.edu", "man", ("woman",))
+    old_client, old_id = member(env, "later-admin@bu.edu", "woman", ("man",), name="Dana Old")
+    a_client = env.login("a@bu.edu")
+    env.s.live.make_admin(env.s.live.account_for_user(old_id).account_id, "test")
+    assert old_id not in shown_ids(a_client)
+    admin = admin_page(env)
+    assert admin.get("/admin/users").status_code == 200
+    from app.insights import load
+    insights = load(env.settings.main_db, env.settings.positive_threshold)
+    assert old_id not in {p.user_id for p in insights.people}
+    approvals = admin.get("/admin/approvals").text
+    assert "later-admin@bu.edu" not in approvals and ADMIN_EMAIL not in approvals
 
 
 def test_users_page_with_nobody_yet(env: Env) -> None:
@@ -662,10 +683,8 @@ def test_the_admin_script_sets_a_password_and_admins_land_on_admin(env: Env) -> 
     done = set_password_with_script(env, "lead@bu.edu", "correct horse")
     assert done.returncode == 0, done.stderr
     response = sign_in_page(env, "Lead@BU.edu", "correct horse")
-    assert response.headers["location"] == "/onboarding/consent"
+    assert response.headers["location"] == "/admin"  # No consent or profile for admins.
     browser = browser_with(env, response)
-    html = browser.get("/onboarding/consent").text
-    assert browser.post("/onboarding/consent", data={"csrf_token": csrf_of(html), "version": "2", "agree": "yes"}).headers["location"] == "/admin"
     assert browser.get("/admin/users").status_code == 200
     assert sign_in_page(env, "lead@bu.edu", "correct horse").headers["location"] == "/admin"
     assert set_password_with_script(env, "x@bu.edu", "short").returncode != 0
@@ -681,8 +700,8 @@ def test_changing_your_password_needs_the_current_one_and_signs_out_elsewhere(en
     assert browser.post("/password", data={**form, "current_password": PASSWORD, "new_password_again": "x"}).status_code == 422
     assert browser.post("/password", data={**form, "current_password": PASSWORD, "new_password": "short", "new_password_again": "short"}).status_code == 422
     assert browser.post("/password", data={**form, "current_password": PASSWORD}).headers["location"] == "/password?done=1"
-    assert browser.get("/onboarding/consent").status_code == 200  # Still signed in here.
-    assert browser_with(env, other_device).get("/onboarding/consent").headers["location"] == "/"  # Signed out there.
+    assert browser.get("/password").status_code == 200  # Still signed in here.
+    assert browser_with(env, other_device).get("/password").headers["location"] == "/"  # Signed out there.
     assert api.get("/me").status_code == 401
     assert sign_in_page(env, "jane@bu.edu", "a new password").status_code == 303
 
@@ -763,3 +782,33 @@ def test_people_partway_through_signing_up_can_sign_out(env: Env, step: str) -> 
     assert out.status_code == 200
     landing = client.get("/", headers={"Accept": "text/html"})
     assert 'action="/login"' in landing.text
+
+
+@pytest.mark.parametrize("feet, inches, cm", [(5, 9, 175), (5, 0, 152), (6, 2, 188), (4, 11, 150)])
+def test_height_in_feet_and_inches_is_stored_in_cm_and_edits_back_unchanged(env: Env, feet: int, inches: int, cm: int) -> None:
+    api = env.consented("tall@bu.edu")
+    browser = page(env, api)
+    html = browser.get("/onboarding/profile").text
+    assert 'value="imperial" checked' in html  # Feet and inches is the default.
+    form = {**{k: str(v) for k, v in profile_body().items() if not isinstance(v, list)},
+            "interests": "chess", "clubs": "", "csrf_token": csrf_of(html),
+            "height_unit": "imperial", "height_ft": str(feet), "height_in": str(inches), "height_cm": ""}
+    assert browser.post("/onboarding/profile", data=form).headers["location"] == "/onboarding/preferences"
+    assert api.get("/me").json()["profile"]["height_cm"] == cm
+    from app.ui import feet_and_inches, height_values
+    assert feet_and_inches(cm) == (feet, inches)
+    assert height_values(cm)["height_ft"] == feet and height_values(cm)["height_in"] == inches
+
+
+def test_every_whole_inch_survives_the_round_trip_through_cm() -> None:
+    from app.ui import feet_and_inches, parse_height
+    for total in range(48, 91):
+        cm, problem = parse_height({"height_unit": "imperial", "height_ft": str(total // 12), "height_in": str(total % 12)})
+        assert problem is None and feet_and_inches(cm) == (total // 12, total % 12), total
+
+
+@pytest.mark.parametrize("ft, inch, message", [("5", "12", "0 to 11"), ("8", "0", "7 ft 6 in"), ("", "3", "whole feet")])
+def test_bad_feet_and_inches_explain_themselves(ft: str, inch: str, message: str) -> None:
+    from app.ui import parse_height
+    cm, problem = parse_height({"height_unit": "imperial", "height_ft": ft, "height_in": inch})
+    assert cm is None and message in problem

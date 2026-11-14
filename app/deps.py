@@ -9,6 +9,13 @@ from app.services import Services
 from live_store import Account, sha256, utc_now
 
 
+ADMINS_DONT_TAKE_PART = "Administrators run the study and don't take part in it."
+
+
+def is_study_admin(account: Account) -> bool:
+    return account.role == "admin" and account.status == "approved"
+
+
 def services(request: Request) -> Services:
     return request.app.state.services
 
@@ -40,8 +47,9 @@ def current_account(request: Request, s: Services = Depends(services)) -> Accoun
 
 
 def consented_account(account: Account = Depends(current_account), s: Services = Depends(services)) -> Account:
-    """Signed in, and has agreed to the current consent text."""
-    if account.consent_version != s.settings.consent_version:
+    """Signed in, and has agreed to the current consent text. Admins run the study rather
+    than take part in it, so they don't consent."""
+    if account.consent_version != s.settings.consent_version and not is_study_admin(account):
         raise HTTPException(403, "Agree to the current consent text first")
     return account
 
@@ -55,6 +63,8 @@ def approved_account(account: Account = Depends(consented_account)) -> Account:
 
 def approved_user(account: Account = Depends(approved_account)) -> Account:
     """Approved, with a profile, which feed, ratings, matches, and safety tools need."""
+    if is_study_admin(account):
+        raise HTTPException(403, ADMINS_DONT_TAKE_PART)
     if account.user_id is None:
         raise HTTPException(403, "Create your profile first")
     return account

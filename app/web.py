@@ -14,7 +14,7 @@ from fastapi import Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
-from app.deps import fresh_sign_in, services, signed_in
+from app.deps import fresh_sign_in, is_study_admin, services, signed_in
 from app.services import Services, first_name
 from live_store import Account
 
@@ -118,6 +118,9 @@ def page_account(request: Request, s: Services = Depends(services)) -> Account:
 
 
 def page_consented(account: Account = Depends(page_account), s: Services = Depends(services)) -> Account:
+    """Consented. Admins don't take part, so every participant page sends them to /admin."""
+    if is_study_admin(account):
+        raise Redirect("/admin")
     if account.consent_version != s.settings.consent_version:
         raise Redirect("/onboarding/consent")
     return account
@@ -131,7 +134,7 @@ def page_member(account: Account = Depends(page_consented), s: Services = Depend
     return account
 
 
-def page_admin_any(account: Account = Depends(page_consented)) -> Account:
+def page_admin_any(account: Account = Depends(page_account)) -> Account:
     """An approved admin, whether or not they signed in recently."""
     if account.role != "admin" or account.status != "approved":
         raise HTTPException(403, "Admins only")
@@ -150,7 +153,7 @@ def page_admin(request: Request, account: Account = Depends(page_admin_any), s: 
 
 def height_text(cm: int) -> str:
     inches = round(cm / 2.54)
-    return f"{cm} cm ({inches // 12} ft {inches % 12} in)"
+    return f"{inches // 12} ft {inches % 12} in ({cm} cm)"
 
 
 TEMPLATES.env.globals.update(first_name=first_name, height_text=height_text)
@@ -167,5 +170,5 @@ def render(request: Request, template: str, context: dict[str, Any] | None = Non
     }
     s: Services = request.app.state.services
     if account is not None:
-        base["is_member"] = next_onboarding_step(s, account) is None
+        base["is_member"] = not base["is_admin"] and next_onboarding_step(s, account) is None
     return TEMPLATES.TemplateResponse(request, template, {**base, **(context or {})}, status_code=status)

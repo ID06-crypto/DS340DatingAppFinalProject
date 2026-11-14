@@ -69,6 +69,7 @@ def approvals(request: Request, admin: Account = Depends(page_admin), s: Service
                 "missing": s.missing_for_approval(a),
             }
             for a in s.live.list_accounts(status)
+            if a.role == "user"  # Admins run the study and aren't participants.
         ]
     return _page(request, "approvals.html", {"lists": lists})
 

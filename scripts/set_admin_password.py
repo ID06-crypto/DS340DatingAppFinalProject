@@ -56,7 +56,8 @@ def main() -> None:
     live.audit("script", "password_change", account.account_id, {"made_admin": account.role != "admin", "created": created})
     print(f"{email} is an administrator, with a password set.{' (New account.)' if created else ''}")
     if account.user_id is not None:
-        print(f"Note: {email} also has a participant profile, so other participants will see and rate it.")
+        print(f"Note: {email} has a participant profile from before it was an admin. Admins aren't shown "
+              "to participants or counted in results, so the profile is just left unused.")
 
 
 if __name__ == "__main__":

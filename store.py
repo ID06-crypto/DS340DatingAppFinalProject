@@ -173,7 +173,7 @@ _ELIGIBLE_CANDIDATES = """
         AND CASE WHEN :live
             THEN EXISTS (
                 SELECT 1 FROM accounts
-                WHERE user_id = c.user_id AND status = 'approved' AND paused = 0
+                WHERE user_id = c.user_id AND status = 'approved' AND paused = 0 AND role = 'user'
             )
             -- Simulated users have no account, and count as approved in simulations.
             ELSE NOT EXISTS (

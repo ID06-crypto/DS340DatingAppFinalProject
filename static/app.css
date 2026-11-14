@@ -223,6 +223,15 @@ input[type="checkbox"]:checked, input[type="radio"]:checked { background: url("/
 input[type="checkbox"]:focus-visible, input[type="radio"]:focus-visible { outline: 2px dashed var(--ink); outline-offset: 3px; }
 
 fieldset { border: 0; padding: 0; margin: 1.5rem 0; min-width: 0; }
+fieldset.height { margin: 1.4rem 0 0; }
+fieldset.height legend { padding: 0; font: 600 .7rem/1.3 var(--mono); text-transform: uppercase; letter-spacing: .12em; color: var(--ink-soft); }
+fieldset.height .units { display: flex; flex-wrap: wrap; gap: 0 1.5rem; }
+fieldset.height .imperial { display: grid; grid-template-columns: 1fr 1fr; column-gap: 1rem; }
+fieldset.height .imperial label { grid-row: 1; margin-top: .6rem; }
+fieldset.height .imperial input { grid-row: 2; }
+fieldset.height .metric label { margin-top: .6rem; }
+fieldset.height:has(input[value="imperial"]:checked) .metric,
+fieldset.height:has(input[value="metric"]:checked) .imperial { display: none; }
 legend { padding: 0; margin-bottom: .25rem; font: 700 1.65rem/1.15 var(--hand); }
 form { margin: 0 0 1rem; }
 

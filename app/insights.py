@@ -104,7 +104,7 @@ _PEOPLE = """
            p.religion, p.interests
     FROM profiles p
     JOIN accounts a ON a.user_id = p.user_id
-    WHERE a.status = 'approved' AND a.experiment_opt_out = 0 AND p.agent = 0
+    WHERE a.status = 'approved' AND a.role = 'user' AND a.experiment_opt_out = 0 AND p.agent = 0
     ORDER BY a.created_at, p.user_id
 """
 
