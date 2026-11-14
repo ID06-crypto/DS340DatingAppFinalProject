@@ -1,5 +1,4 @@
 import json
-import logging
 import random
 import re
 import sqlite3
@@ -12,9 +11,8 @@ from fastapi.testclient import TestClient
 
 from app import matchers as matcher_registry
 from app.config import Settings
-from app.emails import ConsoleEmailSender
 from app.main import create_app
-from app.security import RedactTokens, normalize_email
+from app.security import normalize_email
 from live_store import sha256
 from matching import Matcher, PublicView, RandomMatcher
 from models import LIVE_RUN_ID
@@ -22,6 +20,7 @@ from models import LIVE_RUN_ID
 SITE = "http://testserver"
 ADMIN_EMAIL = "admin@bu.edu"
 EVERYONE = ["man", "woman", "nonbinary"]
+PASSWORD = "test password"
 
 
 def profile_body(name: str = "Sam", gender: str = "man", **overrides: Any) -> dict[str, Any]:
@@ -45,7 +44,6 @@ def profile_body(name: str = "Sam", gender: str = "man", **overrides: Any) -> di
 class Env:
     app: Any
     settings: Settings
-    sender: ConsoleEmailSender
     _admin: TestClient | None = None
 
     @property
@@ -55,15 +53,13 @@ class Env:
     def client(self, origin: str = SITE) -> TestClient:
         return TestClient(self.app, headers={"Origin": origin})
 
-    def link_token(self, email: str) -> str:
-        to = normalize_email(email)
-        message = [m for m in self.sender.outbox if m["to"] == to][-1]
-        return re.search(r"token=(\S+)", message["body"]).group(1)
-
     def login(self, email: str) -> TestClient:
         client = self.client()
-        assert client.post("/auth/request-link", json={"email": email}).status_code == 200
-        assert client.get("/auth/verify", params={"token": self.link_token(email)}).status_code == 200
+        body = {"email": email, "password": PASSWORD}
+        response = client.post("/auth/login", json=body)
+        if response.status_code == 401:
+            response = client.post("/auth/signup", json=body)
+        assert response.status_code in (200, 201), response.text
         return client
 
     def consented(self, email: str) -> TestClient:
@@ -72,7 +68,7 @@ class Env:
         return client
 
     def admin(self) -> TestClient:
-        """Signed in once per test, because sign-in links are rate limited per email."""
+        """Signed in once per test."""
         if self._admin is None:
             self._admin = self.consented(ADMIN_EMAIL)
         return self._admin
@@ -108,11 +104,9 @@ def env(tmp_path: Path) -> Env:
         main_db=tmp_path / "main.db",
         persona_db=tmp_path / "personas.db",
         cookie_secure=False,  # TestClient uses plain http.
-        login_requests_per_email=3,
         login_requests_per_ip=1000,
     )
-    sender = ConsoleEmailSender(stream=None)
-    return Env(create_app(settings, email_sender=sender, rng=random.Random(1)), settings, sender)
+    return Env(create_app(settings, rng=random.Random(1)), settings)
 
 
 def shown_ids(client: TestClient, limit: int = 50) -> list[str]:
@@ -163,52 +157,60 @@ def test_an_allowed_domain_list_still_restricts_when_set() -> None:
     assert normalize_email("jane@sub.bu.edu", ["bu.edu"]) is None
 
 
-@pytest.mark.parametrize("email", ["someone@gmail.com", "not an email", "x@bu.edu.com", "unknown@bu.edu"])
-def test_request_link_gives_the_same_reply_for_any_address(env: Env, email: str) -> None:
-    response = env.client().post("/auth/request-link", json={"email": email})
-    assert response.status_code == 200
-    assert response.json() == {"message": "If that address can sign in, a link is on its way."}
-
-
-def test_links_go_to_any_domain_unless_a_list_is_configured(env: Env, tmp_path: Path) -> None:
-    env.client().post("/auth/request-link", json={"email": "not an email"})
-    assert env.sender.outbox == []
-    env.client().post("/auth/request-link", json={"email": "Jane+x@Gmail.com"})
-    assert [m["to"] for m in env.sender.outbox] == ["jane@gmail.com"]
-
+def test_sign_up_accepts_any_domain_unless_a_list_is_configured(env: Env, tmp_path: Path) -> None:
+    assert env.client().post("/auth/signup", json={"email": "not an email", "password": PASSWORD}).status_code == 422
+    response = env.client().post("/auth/signup", json={"email": "Jane+x@Gmail.com", "password": PASSWORD})
+    assert response.status_code == 201 and response.json()["status"] == "pending"
+    assert env.s.live.account_for_email("jane@gmail.com") is not None
     settings = Settings(site_url=SITE, main_db=tmp_path / "m3.db", persona_db=tmp_path / "p3.db", allowed_email_domains=("bu.edu",))
-    sender = ConsoleEmailSender(stream=None)
-    client = TestClient(create_app(settings, email_sender=sender), headers={"Origin": SITE})
-    client.post("/auth/request-link", json={"email": "jane@gmail.com"})
-    assert sender.outbox == []
-    client.post("/auth/request-link", json={"email": "Jane+x@BU.edu"})
-    assert [m["to"] for m in sender.outbox] == ["jane@bu.edu"]
+    client = TestClient(create_app(settings), headers={"Origin": SITE})
+    assert client.post("/auth/signup", json={"email": "jane@gmail.com", "password": PASSWORD}).status_code == 422
+    assert client.post("/auth/signup", json={"email": "Jane+x@BU.edu", "password": PASSWORD}).status_code == 201
 
 
-def test_login_tokens_are_hashed_single_use_and_expire(env: Env) -> None:
-    client = env.client()
-    client.post("/auth/request-link", json={"email": "jane@bu.edu"})
-    token = env.link_token("jane@bu.edu")
+def test_sign_up_rules(env: Env) -> None:
+    assert env.client().post("/auth/signup", json={"email": "a@bu.edu", "password": "short"}).status_code == 422
+    assert env.client().post("/auth/signup", json={"email": "a@bu.edu", "password": PASSWORD}).status_code == 201
+    taken = env.client().post("/auth/signup", json={"email": "A@bu.edu", "password": "another one"})
+    assert taken.status_code == 409 and "already an account" in taken.text
+    admin = env.client().post("/auth/signup", json={"email": ADMIN_EMAIL, "password": PASSWORD}).json()
+    assert (admin["role"], admin["status"]) == ("admin", "approved")
+    env.s.live.set_setting("signups_paused", True)
+    assert env.client().post("/auth/signup", json={"email": "late@bu.edu", "password": PASSWORD}).status_code == 403
+
+
+def test_passwords_are_hashed_and_wrong_ones_get_one_answer(env: Env) -> None:
+    env.client().post("/auth/signup", json={"email": "jane@bu.edu", "password": PASSWORD})
     with sqlite3.connect(env.settings.main_db) as conn:
-        stored = [row[0] for row in conn.execute("SELECT token_hash FROM login_tokens")]
-    assert stored == [sha256(token)]
-    assert token not in env.settings.main_db.read_bytes().decode("latin-1")
+        dump = "\n".join(conn.iterdump())
+    assert PASSWORD not in dump and "scrypt$" in dump
+    wrong = env.client().post("/auth/login", json={"email": "jane@bu.edu", "password": "wrong password"})
+    unknown = env.client().post("/auth/login", json={"email": "nobody@bu.edu", "password": PASSWORD})
+    assert wrong.status_code == unknown.status_code == 401
+    assert wrong.json() == unknown.json()
+    assert env.client().post("/auth/login", json={"email": "JANE@bu.edu", "password": PASSWORD}).status_code == 200
 
-    assert client.get("/auth/verify", params={"token": token}).status_code == 200
-    assert env.client().get("/auth/verify", params={"token": token}).status_code == 400
 
-    env.client().post("/auth/request-link", json={"email": "late@bu.edu"})
-    late = env.link_token("late@bu.edu")
-    with sqlite3.connect(env.settings.main_db) as conn:
-        conn.execute("UPDATE login_tokens SET expires_at = '2000-01-01T00:00:00.000000+00:00' WHERE token_hash = ?", (sha256(late),))
-    assert env.client().get("/auth/verify", params={"token": late}).status_code == 400
-    assert env.client().get("/auth/verify", params={"token": "made-up"}).status_code == 400
+def test_failed_sign_ins_are_limited_per_email_and_per_address(env: Env, tmp_path: Path) -> None:
+    env.client().post("/auth/signup", json={"email": "jane@bu.edu", "password": PASSWORD})
+    codes = [env.client().post("/auth/login", json={"email": "jane@bu.edu", "password": "wrong"}).status_code for _ in range(6)]
+    assert codes == [401] * 5 + [429]
+    assert env.client().post("/auth/login", json={"email": "jane@bu.edu", "password": PASSWORD}).status_code == 429
+    settings = Settings(site_url=SITE, main_db=tmp_path / "m2.db", persona_db=tmp_path / "p2.db", login_requests_per_ip=2)
+    limited = TestClient(create_app(settings), headers={"Origin": SITE})
+    codes = [limited.post("/auth/login", json={"email": f"u{i}@bu.edu", "password": "x"}).status_code for i in range(3)]
+    assert codes == [401, 401, 429]
+
+
+def test_successful_sign_ins_never_count_toward_the_limit(env: Env) -> None:
+    env.client().post("/auth/signup", json={"email": "jane@bu.edu", "password": PASSWORD})
+    for _ in range(10):
+        assert env.client().post("/auth/login", json={"email": "jane@bu.edu", "password": PASSWORD}).status_code == 200
 
 
 def test_sessions_are_hashed_and_cookies_are_locked_down(env: Env) -> None:
     client = env.client()
-    client.post("/auth/request-link", json={"email": "jane@bu.edu"})
-    response = client.get("/auth/verify", params={"token": env.link_token("jane@bu.edu")})
+    response = client.post("/auth/signup", json={"email": "jane@bu.edu", "password": PASSWORD})
     cookie = response.headers["set-cookie"]
     assert "HttpOnly" in cookie
     assert "SameSite=lax" in cookie
@@ -221,24 +223,10 @@ def test_sessions_are_hashed_and_cookies_are_locked_down(env: Env) -> None:
 
 def test_secure_cookie_flag_is_set_when_configured(tmp_path: Path) -> None:
     settings = Settings(site_url=SITE, main_db=tmp_path / "m.db", persona_db=tmp_path / "p.db", cookie_secure=True)
-    sender = ConsoleEmailSender(stream=None)
-    env = Env(create_app(settings, email_sender=sender), settings, sender)
-    client = env.client()
-    client.post("/auth/request-link", json={"email": "jane@bu.edu"})
-    response = client.get("/auth/verify", params={"token": env.link_token("jane@bu.edu")})
+    env = Env(create_app(settings), settings)
+    response = env.client().post("/auth/signup", json={"email": "jane@bu.edu", "password": PASSWORD})
     assert "Secure" in response.headers["set-cookie"]
     assert "Strict-Transport-Security" in response.headers
-
-
-def test_per_email_limit_is_silent_and_per_ip_limit_is_429(env: Env, tmp_path: Path) -> None:
-    for _ in range(5):
-        assert env.client().post("/auth/request-link", json={"email": "jane@bu.edu"}).status_code == 200
-    assert len(env.sender.outbox) == env.settings.login_requests_per_email
-
-    settings = Settings(site_url=SITE, main_db=tmp_path / "m2.db", persona_db=tmp_path / "p2.db", login_requests_per_ip=2)
-    limited = TestClient(create_app(settings, email_sender=ConsoleEmailSender(stream=None)), headers={"Origin": SITE})
-    codes = [limited.post("/auth/request-link", json={"email": f"u{i}@bu.edu"}).status_code for i in range(3)]
-    assert codes == [200, 200, 429]
 
 
 def test_logout_ends_the_session(env: Env) -> None:
@@ -390,12 +378,12 @@ def test_humans_are_never_shown_agents(env: Env) -> None:
 def test_the_app_refuses_to_start_on_a_database_with_agents(env: Env, tmp_path: Path) -> None:
     env.s.manager.add_profile({**profile_body("Agent", "woman"), "agent": True})
     with pytest.raises(RuntimeError, match="simulated agents"):
-        create_app(env.settings, email_sender=ConsoleEmailSender(stream=None))
+        create_app(env.settings)
     import paths
 
     settings = Settings(main_db=paths.MAIN_DB, persona_db=tmp_path / "p.db")
     with pytest.raises(RuntimeError, match="simulated-agent data"):
-        create_app(settings, email_sender=ConsoleEmailSender(stream=None))
+        create_app(settings)
 
 
 def test_asking_the_feed_again_shows_the_same_person_so_nobody_is_skipped(env: Env) -> None:
@@ -517,8 +505,7 @@ def test_registry_accepts_any_matcher_and_picks_with_a_seeded_rng(tmp_path: Path
     def chosen(seed: int) -> list[str]:
         folder = tmp_path / f"run{next(runs)}"
         settings = Settings(site_url=SITE, admin_emails=(ADMIN_EMAIL,), main_db=folder / "m.db", persona_db=folder / "p.db", cookie_secure=False, enabled_matchers=("random", "first"))
-        sender = ConsoleEmailSender(stream=None)
-        env = Env(create_app(settings, email_sender=sender, rng=random.Random(seed)), settings, sender)
+        env = Env(create_app(settings, rng=random.Random(seed)), settings)
         viewer, _ = env.user("v@bu.edu", "man", ["woman"])
         for i in range(8):
             env.user(f"w{i}@bu.edu", "woman", ["man"])
@@ -536,7 +523,7 @@ def test_registry_accepts_any_matcher_and_picks_with_a_seeded_rng(tmp_path: Path
 def test_unknown_matcher_names_are_refused(tmp_path: Path) -> None:
     settings = Settings(main_db=tmp_path / "m.db", persona_db=tmp_path / "p.db", enabled_matchers=("elo",))
     with pytest.raises(ValueError, match="ENABLED_MATCHERS"):
-        create_app(settings, email_sender=ConsoleEmailSender(stream=None))
+        create_app(settings)
 
 
 class OutsidePoolMatcher(RandomMatcher):
@@ -549,8 +536,7 @@ class OutsidePoolMatcher(RandomMatcher):
 def test_a_pick_outside_the_pool_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(matcher_registry.REGISTRY, "rogue", OutsidePoolMatcher)
     settings = Settings(site_url=SITE, admin_emails=(ADMIN_EMAIL,), main_db=tmp_path / "m.db", persona_db=tmp_path / "p.db", cookie_secure=False, enabled_matchers=("rogue",))
-    sender = ConsoleEmailSender(stream=None)
-    env = Env(create_app(settings, email_sender=sender), settings, sender)
+    env = Env(create_app(settings), settings)
     viewer, _ = env.user("v@bu.edu", "man", ["woman"])
     env.user("w@bu.edu", "woman", ["man"])
     assert viewer.get("/feed/next").status_code == 500
@@ -709,7 +695,7 @@ def test_deleting_an_account_removes_everything(env: Env) -> None:
         assert count("SELECT COUNT(*) FROM blocks WHERE blocker_id = ? OR blocked_id = ?", a_id, a_id) == 0
         assert count("SELECT COUNT(*) FROM reports WHERE reporter_id = ?", a_id) == 0
         assert count("SELECT COUNT(*) FROM sessions WHERE account_id = ?", a_account) == 0
-        assert count("SELECT COUNT(*) FROM login_tokens WHERE email_normalized = 'a@bu.edu'") == 0
+        assert count("SELECT COUNT(*) FROM passwords WHERE account_id = ?", a_account) == 0
         # The report about them is kept as a safety record, with them removed from it.
         assert count("SELECT COUNT(*) FROM reports WHERE reporter_id = ? AND reported_id IS NULL", b_id) == 1
         dump = "\n".join(conn.iterdump())
@@ -786,13 +772,6 @@ def test_security_headers_are_on_every_response(env: Env) -> None:
         assert response.headers["cache-control"] == "no-store"
 
 
-def test_tokens_are_redacted_from_access_logs() -> None:
-    record = logging.LogRecord("uvicorn.access", logging.INFO, "", 0, '%s - "%s %s"', ("1.2.3.4", "GET", "/auth/verify?token=abc123&x=1"), None)
-    RedactTokens().filter(record)
-    assert "abc123" not in record.getMessage()
-    assert "token=[redacted]" in record.getMessage()
-
-
 @pytest.mark.parametrize(
     ("method", "path"),
     [
@@ -801,8 +780,19 @@ def test_tokens_are_redacted_from_access_logs() -> None:
         ("post", "/me/photos"),
         ("get", "/photos/x"),
         ("get", "/admin/reports/x/messages"),
+        ("post", "/auth/request-link"),
+        ("get", "/auth/verify"),
     ],
 )
 def test_photo_and_message_routes_are_gone(env: Env, method: str, path: str) -> None:
     client, _ = env.user("jane@bu.edu")
     assert getattr(client, method)(path).status_code in (404, 405)
+
+
+def test_a_whole_class_can_join_from_one_network(tmp_path: Path) -> None:
+    settings = Settings(site_url=SITE, main_db=tmp_path / "m.db", persona_db=tmp_path / "p.db", login_requests_per_ip=3, cookie_secure=False)
+    client = TestClient(create_app(settings), headers={"Origin": SITE})
+    for i in range(10):
+        assert client.post("/auth/signup", json={"email": f"s{i}@bu.edu", "password": PASSWORD}).status_code == 201
+    codes = [client.post("/auth/signup", json={"email": "bad", "password": PASSWORD}).status_code for _ in range(4)]
+    assert codes == [422, 422, 422, 429]

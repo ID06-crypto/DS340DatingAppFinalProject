@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Temporary password{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block content %}
+{% include "admin/_nav.html" %}
+<h1>Temporary password</h1>
+<p>Give this to <strong>{{ email }}</strong> yourself, for example in person or by your own email. It's shown only once. When they sign in with it, they'll have to choose a new password straight away. They've been signed out everywhere.</p>
+<p class="math"><code>{{ temporary }}</code></p>
+<p><a href="/admin/approvals">Back to approvals</a></p>
+{% endblock %}

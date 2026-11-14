@@ -1,7 +1,7 @@
 """Tables for the live app, stored in main.db alongside profiles and ratings.
 
-Emails exist only in accounts. Login tokens and session ids are stored as SHA-256
-hashes, never as the raw values.
+Emails exist only in accounts. Session ids are stored as SHA-256 hashes, and passwords
+as scrypt hashes, never as the raw values. The app sends no email.
 
 Deleting a profile cascades to everything about that user here. Reports about a deleted
 user are kept, with their ids cleared, because they're safety records.
@@ -27,16 +27,6 @@ LIVE_SCHEMA = (
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_accounts_status ON accounts (status)",
-    """
-    CREATE TABLE IF NOT EXISTS login_tokens (
-        token_hash       TEXT PRIMARY KEY,
-        email_normalized TEXT NOT NULL,
-        created_at       TEXT NOT NULL,
-        expires_at       TEXT NOT NULL,
-        used_at          TEXT
-    )
-    """,
-    "CREATE INDEX IF NOT EXISTS idx_login_tokens_email ON login_tokens (email_normalized)",
     """
     CREATE TABLE IF NOT EXISTS sessions (
         session_hash TEXT PRIMARY KEY,
@@ -139,12 +129,14 @@ LIVE_SCHEMA = (
         real_name TEXT NOT NULL
     )
     """,
-    # Only admins can have passwords, stored as scrypt hashes. Everyone else uses links.
+    # Everyone signs in with an email and password, stored only as a scrypt hash.
+    # must_change is set when an admin resets someone's password to a temporary one.
     """
-    CREATE TABLE IF NOT EXISTS admin_passwords (
+    CREATE TABLE IF NOT EXISTS passwords (
         account_id    TEXT PRIMARY KEY REFERENCES accounts (account_id) ON DELETE CASCADE,
         password_hash TEXT NOT NULL,
-        updated_at    TEXT NOT NULL
+        updated_at    TEXT NOT NULL,
+        must_change   INTEGER NOT NULL DEFAULT 0 CHECK (must_change IN (0, 1))
     )
     """,
     """

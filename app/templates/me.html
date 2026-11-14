@@ -9,12 +9,12 @@
   <li><a href="/me/profile">Edit profile</a></li>
   <li><a href="/me/preferences">Who you're interested in</a></li>
   <li><a href="/me/blocked">Blocked people</a></li>
+  <li><a href="/password">Change password</a></li>
 </ul>
 
 <h2>Settings</h2>
 <form method="post" action="/me/settings">
   {% include "partials/csrf.html" %}
-  <label><input type="checkbox" name="notify_on_match" value="yes" {% if account.notify_on_match %}checked{% endif %}> <span>Email me when I get a new match<small>That's the only email we send besides sign-in links. It never includes names.</small></span></label>
   <label><input type="checkbox" name="experiment_opt_out" value="yes" aria-describedby="opt-out-help" {% if account.experiment_opt_out %}checked{% endif %}> <span>Opt out of the experiment<small id="opt-out-help">If you opt out, you always get the default way of choosing who you see, instead of a randomly chosen algorithm, and your data is left out of all analysis and exports. Everything else works the same.</small></span></label>
   <button type="submit">Save settings</button>
 </form>

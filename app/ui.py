@@ -39,7 +39,7 @@ DESIGN_RULES = [
     "No \"someone liked you\" teasers. You only find out about a match.",
     "No infinite scroll. You see one person at a time.",
     "No online, typing, or read indicators.",
-    "No reminder or re-engagement emails. The only emails are sign-in links and one email per new match.",
+    "No emails at all: no reminders, no re-engagement, and no match notifications. New matches wait on your Matches page.",
     "No skip button. Every rating counts, so take your time.",
     "No ads and no tracking scripts.",
 ]
@@ -66,39 +66,92 @@ def _plain(error: dict[str, Any]) -> str:
 # Public pages
 
 
+def _client(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
+
+
+def after_sign_in(s: Services, account: Account) -> str:
+    """Where someone goes once signed in."""
+    if s.live.must_change_password(account.account_id):
+        return "/password"
+    if account.consent_version != s.settings.consent_version:
+        return "/onboarding/consent"
+    if account.role == "admin" and account.status == "approved":
+        return "/admin"  # Admins don't need a profile to run the study.
+    return next_onboarding_step(s, account) or "/discover"
+
+
+def _signed_in(request: Request, s: Services, account: Account, session_id: str) -> Response:
+    response = redirect(request, after_sign_in(s, account))
+    set_session_cookie(response, session_id, s)
+    return response
+
+
 @router.get("/")
 def landing(request: Request, s: Services = Depends(services)) -> Response:
     account = signed_in(request, s)
     if account is not None:
-        return redirect(request, next_onboarding_step(s, account) or "/discover")
-    return render(request, "landing.html")
+        return redirect(request, after_sign_in(s, account))
+    return render(request, "landing.html", {"email": "", "error": None})
 
 
 @router.post("/login")
 async def login(request: Request, s: Services = Depends(services)) -> Response:
     form = await request.form()
+    email = str(form.get("email", ""))[:320]
     try:
-        actions.request_login_link(s, str(form.get("email", "")), request.client.host if request.client else "unknown")
+        account, session_id = actions.password_sign_in(s, email, str(form.get("password", "")), _client(request))
     except ActionError as error:
-        return render(request, "error.html", {"heading": "Please wait", "message": error.message}, error.status)
-    return redirect(request, "/login/sent")
+        return render(request, "landing.html", {"email": email, "error": error.message}, error.status)
+    return _signed_in(request, s, account, session_id)
 
 
-@router.get("/login/sent")
-def login_sent(request: Request, s: Services = Depends(services)) -> Response:
-    return render(request, "login_sent.html", {"minutes": s.settings.login_token_minutes})
+@router.get("/join")
+def join_page(request: Request, s: Services = Depends(services)) -> Response:
+    if signed_in(request, s) is not None:
+        return redirect(request, "/")
+    return render(request, "join.html", {"email": "", "error": None, "closed": s.controls().signups_paused})
 
 
-@router.get("/auth/verify")
-def verify(token: str, request: Request, s: Services = Depends(services)) -> Response:
+@router.post("/join")
+async def join(request: Request, s: Services = Depends(services)) -> Response:
+    form = await request.form()
+    email = str(form.get("email", ""))[:320]
+    password, again = str(form.get("password", "")), str(form.get("password_again", ""))
     try:
-        account, session_id = actions.sign_in(s, token)
+        if password != again:
+            raise ActionError(422, "The two passwords don't match.")
+        account, session_id = actions.sign_up(s, email, password, _client(request))
     except ActionError as error:
-        return render(request, "error.html", {"heading": "That link didn't work", "message": error.message}, error.status)
-    destination = "/admin" if account.role == "admin" and account.status == "approved" else next_onboarding_step(s, account) or "/discover"
-    response = redirect(request, destination)
-    set_session_cookie(response, session_id, s)
-    return response
+        return render(request, "join.html", {"email": email, "error": error.message, "closed": False}, error.status)
+    return _signed_in(request, s, account, session_id)
+
+
+@router.get("/password")
+def password_page(request: Request, account: Account = Depends(page_account), s: Services = Depends(services)) -> Response:
+    return render(request, "password.html", {
+        "error": None,
+        "done": request.query_params.get("done") == "1",
+        "temporary": s.live.must_change_password(account.account_id),
+        "nav": "me",
+    })
+
+
+@router.post("/password", dependencies=[csrf])
+async def password_save(request: Request, account: Account = Depends(page_account), s: Services = Depends(services)) -> Response:
+    form = await request.form()
+    new, again = str(form.get("new_password", "")), str(form.get("new_password_again", ""))
+    temporary = s.live.must_change_password(account.account_id)
+    session_id = request.cookies.get(SESSION_COOKIE)
+    try:
+        if new != again:
+            raise ActionError(422, "The two new passwords don't match.")
+        actions.change_password(s, account, str(form.get("current_password", "")), new, sha256(session_id) if session_id else None)
+    except ActionError as error:
+        return render(request, "password.html", {"error": error.message, "done": False, "temporary": temporary, "nav": "me"}, error.status)
+    if temporary:
+        return redirect(request, after_sign_in(s, s.live.get_account(account.account_id)))
+    return redirect(request, "/password?done=1")
 
 
 @router.post("/logout", dependencies=[csrf])
@@ -170,9 +223,7 @@ async def consent_submit(request: Request, account: Account = Depends(page_accou
     if form.get("agree") != "yes":
         return _consent(request, s, "Tick the box to agree before continuing.")
     actions.give_consent(s, account, str(form.get("version", "")))
-    if account.role == "admin" and account.status == "approved":
-        return redirect(request, "/admin")  # Admins don't need a profile to run the study.
-    return redirect(request, "/onboarding/profile")
+    return redirect(request, after_sign_in(s, s.live.get_account(account.account_id)))
 
 
 @router.get("/onboarding/profile")
@@ -484,7 +535,7 @@ def me_unblock(user_id: str, request: Request, account: Account = Depends(page_m
 async def me_settings(request: Request, account: Account = Depends(page_member), s: Services = Depends(services)) -> Response:
     form = await request.form()
     actions.set_account_flags(
-        s, account, notify_on_match=form.get("notify_on_match") == "yes", experiment_opt_out=form.get("experiment_opt_out") == "yes"
+        s, account, experiment_opt_out=form.get("experiment_opt_out") == "yes"
     )
     return redirect(request, "/me?done=saved")
 

@@ -23,3 +23,17 @@ class RateLimiter:
                 return False
             hits.append(now)
             return True
+
+    def exceeded(self, key: str) -> bool:
+        """Whether the limit is already used up, without recording anything."""
+        now = time.monotonic()
+        with self._lock:
+            hits = self._hits[key]
+            while hits and hits[0] <= now - self.window:
+                hits.popleft()
+            return len(hits) >= self.limit
+
+    def record(self, key: str) -> None:
+        """Count one attempt, such as a failed password."""
+        with self._lock:
+            self._hits[key].append(time.monotonic())

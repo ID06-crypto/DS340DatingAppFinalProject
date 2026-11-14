@@ -110,29 +110,6 @@ class LiveStore:
 
     # Login tokens
 
-    def save_login_token(self, token_hash: str, email: str, expires_at: datetime) -> None:
-        with transaction(self.db_path) as conn:
-            conn.execute("DELETE FROM login_tokens WHERE expires_at < ?", (to_text(utc_now()),))
-            conn.execute(
-                "INSERT INTO login_tokens (token_hash, email_normalized, created_at, expires_at) VALUES (?, ?, ?, ?)",
-                (token_hash, email, to_text(utc_now()), to_text(expires_at)),
-            )
-
-    def use_login_token(self, token_hash: str) -> str | None:
-        """Mark an unused, unexpired token as used, and return its email. Otherwise None."""
-        now = to_text(utc_now())
-        with transaction(self.db_path) as conn:
-            row = conn.execute(
-                "SELECT email_normalized FROM login_tokens WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?",
-                (token_hash, now),
-            ).fetchone()
-            if row is None:
-                return None
-            conn.execute("UPDATE login_tokens SET used_at = ? WHERE token_hash = ?", (now, token_hash))
-        return row["email_normalized"]
-
-    # Accounts
-
     def get_or_create_account(self, email: str, admin: bool) -> tuple[Account, bool]:
         """Return the account for this email, creating it if needed. Also returns whether it's new.
 
@@ -223,22 +200,45 @@ class LiveStore:
                 (now, by, account_id),
             )
 
-    # Admin passwords
+    # Passwords
 
     def password_hash(self, account_id: str) -> str | None:
         with connect(self.db_path) as conn:
-            row = conn.execute("SELECT password_hash FROM admin_passwords WHERE account_id = ?", (account_id,)).fetchone()
+            row = conn.execute("SELECT password_hash FROM passwords WHERE account_id = ?", (account_id,)).fetchone()
         return row["password_hash"] if row else None
 
-    def set_password_hash(self, account_id: str, password_hash: str) -> None:
+    def must_change_password(self, account_id: str) -> bool:
+        with connect(self.db_path) as conn:
+            row = conn.execute("SELECT must_change FROM passwords WHERE account_id = ?", (account_id,)).fetchone()
+        return bool(row and row["must_change"])
+
+    def set_password_hash(self, account_id: str, password_hash: str, must_change: bool = False) -> None:
         with transaction(self.db_path) as conn:
             conn.execute(
                 """
-                INSERT INTO admin_passwords (account_id, password_hash, updated_at) VALUES (?, ?, ?)
-                ON CONFLICT (account_id) DO UPDATE SET password_hash = excluded.password_hash, updated_at = excluded.updated_at
+                INSERT INTO passwords (account_id, password_hash, updated_at, must_change) VALUES (?, ?, ?, ?)
+                ON CONFLICT (account_id) DO UPDATE SET password_hash = excluded.password_hash,
+                    updated_at = excluded.updated_at, must_change = excluded.must_change
                 """,
-                (account_id, password_hash, to_text(utc_now())),
+                (account_id, password_hash, to_text(utc_now()), int(must_change)),
             )
+
+    def end_other_sessions(self, account_id: str, keep_hash: str | None = None) -> None:
+        """Sign an account out everywhere, except the session given."""
+        with transaction(self.db_path) as conn:
+            conn.execute("DELETE FROM sessions WHERE account_id = ? AND session_hash IS NOT ?", (account_id, keep_hash))
+
+    def adopt_admin_passwords(self) -> int:
+        """Move passwords from the admin_passwords table older versions used. Idempotent."""
+        with transaction(self.db_path) as conn:
+            exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'admin_passwords'").fetchone()
+            if not exists:
+                return 0
+            moved = conn.execute(
+                "INSERT OR IGNORE INTO passwords (account_id, password_hash, updated_at) SELECT account_id, password_hash, updated_at FROM admin_passwords"
+            ).rowcount
+            conn.execute("DROP TABLE admin_passwords")
+        return moved
 
     # Real names. Profiles hold the assigned display name.
 
@@ -281,7 +281,6 @@ class LiveStore:
         """Delete the account, its sessions (by cascade), and its login tokens."""
         with transaction(self.db_path) as conn:
             conn.execute("DELETE FROM accounts WHERE account_id = ?", (account_id,))
-            conn.execute("DELETE FROM login_tokens WHERE email_normalized = ?", (email,))
 
     # Sessions
 

@@ -9,7 +9,6 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from app.config import Settings
-from app.emails import EmailSender
 from app.fake_names import pick_name
 from app.ratelimit import RateLimiter
 from live_store import Account, LiveStore
@@ -39,10 +38,8 @@ class Services:
     settings: Settings
     manager: ProfileManager
     live: LiveStore
-    email_sender: EmailSender
     matchers: dict[str, Matcher]
     rng: random.Random
-    login_per_email: RateLimiter
     login_per_ip: RateLimiter
     # Matchers and the rng aren't thread-safe, and requests run on worker threads.
     matcher_lock: threading.Lock = field(default_factory=threading.Lock)
@@ -114,15 +111,6 @@ class Services:
             )
         self.live.set_setting("match_threshold", self.settings.match_threshold)
 
-    def send_email(self, to: str, subject: str, body: str) -> bool:
-        """Send an email, counting a failure without raising. Never logs the address or body."""
-        try:
-            self.email_sender.send(to, subject, body)
-            return True
-        except Exception:
-            logger.error("An email couldn't be sent")
-            self.live.record_event("email_failure")
-            return False
 
     def missing_for_approval(self, account: Account) -> list[str]:
         missing = []

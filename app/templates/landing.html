@@ -6,14 +6,19 @@
 <h1>BU matching study</h1>
 <figure class="hero">{{ two_cards() }}</figure>
 <p class="lede">This is a free research project by BU students. It tests whether a matching algorithm can recommend people who like each other, without the tricks many apps use to keep you scrolling.</p>
-<p>You'll see one person at a time and rate how interested you are. If two people rate each other highly, they match. There are no streaks, notifications to bring you back, or ads.</p>
+<p>You'll see one person at a time and rate how interested you are. If two people rate each other highly, they match. There are no streaks, notifications to bring you back, emails, or ads.</p>
 <p><a href="/transparency">Read exactly what we collect and who can see it</a></p>
 <article>
-  <h2>Sign in or join</h2>
+  <h2>Sign in</h2>
   <form method="post" action="/login">
-    <label for="email">Your email address</label>
-    <input id="email" name="email" type="email" autocomplete="email" required placeholder="you@example.com">
-    <button type="submit" class="wide">Email me a sign-in link</button>
+    {% if error %}<p class="error" role="alert" id="login-error">{{ error }}</p>{% endif %}
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email" autocomplete="username" required value="{{ email }}" placeholder="you@example.com" {% if error %}aria-describedby="login-error"{% endif %}>
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required>
+    <button type="submit" class="wide">Sign in</button>
   </form>
+  <p>New here? <a href="/join">Join the study</a>.</p>
+  <p><small>Forgot your password? Ask the research team to reset it.</small></p>
 </article>
 {% endblock %}

@@ -25,11 +25,17 @@ def signed_in(request: Request, s: Services) -> Account | None:
     return account
 
 
+# The only API paths someone with a temporary password can use before changing it.
+TEMPORARY_PASSWORD_PATHS = {"/auth/password", "/auth/logout"}
+
+
 def current_account(request: Request, s: Services = Depends(services)) -> Account:
-    """Any signed-in account."""
+    """Any signed-in account. One with a temporary password must change it first."""
     account = signed_in(request, s)
     if account is None:
         raise HTTPException(401, "Sign in first")
+    if request.url.path not in TEMPORARY_PASSWORD_PATHS and s.live.must_change_password(account.account_id):
+        raise HTTPException(403, "Change your temporary password first, with POST /auth/password")
     return account
 
 
@@ -55,7 +61,7 @@ def approved_user(account: Account = Depends(approved_account)) -> Account:
 
 
 def fresh_sign_in(request: Request, s: Services) -> bool:
-    """Whether this session started with a sign-in link recently enough for admin work."""
+    """Whether this session started recently enough for admin work."""
     started: datetime | None = getattr(request.state, "session_started", None)
     return started is not None and utc_now() - started <= timedelta(minutes=s.settings.admin_step_up_minutes)
 

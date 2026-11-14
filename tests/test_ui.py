@@ -14,13 +14,12 @@ from fastapi.testclient import TestClient
 from app import actions
 from app import matchers as matcher_registry
 from app.config import Settings
-from app.emails import ConsoleEmailSender
 from app.main import create_app
 from live_store import to_text, utc_now
 from matching import Matcher, PublicView
 from models import LIVE_RUN_ID
 from raters import build_rater_input
-from test_api import ADMIN_EMAIL, SITE, Env, profile_body
+from test_api import ADMIN_EMAIL, PASSWORD, SITE, Env, profile_body
 
 HTML = {"Accept": "text/html"}
 
@@ -32,13 +31,11 @@ def make_env(tmp_path: Path, **overrides: Any) -> Env:
         main_db=tmp_path / "main.db",
         persona_db=tmp_path / "personas.db",
         cookie_secure=False,
-        login_requests_per_email=50,
         login_requests_per_ip=10_000,
         export_salt="test-salt",
         **overrides,
     )
-    sender = ConsoleEmailSender(stream=None)
-    return Env(create_app(settings, email_sender=sender, rng=random.Random(1)), settings, sender)
+    return Env(create_app(settings, rng=random.Random(1)), settings)
 
 
 @pytest.fixture
@@ -277,20 +274,11 @@ def test_first_names_only_and_religion_only_when_given(env: Env) -> None:
     assert "buddhist" in c.get("/discover").text  # The same card again, now with religion.
 
 
-def test_match_email_once_per_participant_with_no_names(env: Env) -> None:
-    a, a_id = member(env, "a@bu.edu", name="Alex Smith")
-    b, b_id = member(env, "b@bu.edu", "woman", ("man",), name="Bea Jones")
-    env.s.live.set_flags(env.s.live.account_for_user(b_id).account_id, notify_on_match=False)
-    before = len(env.sender.outbox)
-    for client, user in ((a, a_id), (b, b_id)):
-        html = client.get("/discover").text
-        client.post("/discover/rate", data={"impression_id": impression_of(env, user).impression_id, "score": "9"}, headers=htmx(client, html))
-    new = env.sender.outbox[before:]
-    assert [m["to"] for m in new] == ["a@bu.edu"]
-    assert new[0]["subject"] == "You have a new match"
-    for secret in ("Alex", "Bea", "Smith", "Jones"):
-        assert secret not in new[0]["body"]
-    assert {m["subject"] for m in env.sender.outbox} <= {"Your sign-in link", "You have a new match"}
+def test_the_app_never_sends_email(env: Env) -> None:
+    import app.services as services_module
+
+    assert not hasattr(env.s, "send_email") and not hasattr(env.s, "email_sender")
+    assert "smtplib" not in open(services_module.__file__).read()
 
 
 # Account settings
@@ -366,7 +354,11 @@ def test_stale_admin_sign_in_must_step_up(env: Env) -> None:
     assert admin.get("/admin/approvals").headers["location"] == "/admin/step-up"
     assert TestClient(env.app, cookies=dict(admin.cookies)).get("/admin/accounts").status_code == 403
     html = admin.get("/admin/step-up").text
-    assert admin.post("/admin/step-up", data={"csrf_token": csrf_of(html)}).headers["location"] == "/login/sent"
+    assert admin.post("/admin/step-up", data={"csrf_token": csrf_of(html), "password": "wrong"}).status_code == 401
+    confirmed = admin.post("/admin/step-up", data={"csrf_token": csrf_of(html), "password": PASSWORD})
+    assert confirmed.headers["location"] == "/admin"
+    admin.cookies.update(confirmed.cookies)
+    assert admin.get("/admin/approvals").status_code == 200
 
 
 def test_reports_show_no_conversation_and_admin_routes_list_no_ratings(env: Env) -> None:
@@ -618,12 +610,12 @@ def test_people_who_joined_before_display_names_get_one_at_startup(env: Env) -> 
     with sqlite3.connect(env.settings.main_db) as conn:  # As if made by the old code.
         conn.execute("DELETE FROM private_names WHERE user_id = ?", (user_id,))
         conn.execute("UPDATE profiles SET name = 'Olga Old' WHERE user_id = ?", (user_id,))
-    create_app(env.settings, email_sender=ConsoleEmailSender(stream=None))
+    create_app(env.settings)
     assert env.s.live.real_name(user_id) == "Olga Old"
     assert env.s.manager.get_profile(user_id).name in WOMEN
 
 
-# Admin passwords
+# Passwords
 
 
 def set_password_with_script(env: Env, email: str, password: str):
@@ -637,62 +629,86 @@ def set_password_with_script(env: Env, email: str, password: str):
                           env=environment, capture_output=True, text=True)
 
 
-def password_login(env: Env, email: str, password: str):
-    return page(env).post("/admin/login", data={"email": email, "password": password})
+def sign_in_page(env: Env, email: str, password: str):
+    return page(env).post("/login", data={"email": email, "password": password})
 
 
-def test_admins_sign_in_with_a_password_set_by_the_script(env: Env) -> None:
-    done = set_password_with_script(env, "lead@bu.edu", "correct horse")
-    assert done.returncode == 0, done.stderr
-    with sqlite3.connect(env.settings.main_db) as conn:
-        dump = "\n".join(conn.iterdump())
-    assert "correct horse" not in dump and "scrypt$" in dump  # Only a hash is stored.
-    response = password_login(env, "Lead@BU.edu", "correct horse")
-    assert response.status_code == 303 and response.headers["location"] == "/onboarding/consent"
+def browser_with(env: Env, response) -> TestClient:
     browser = page(env)
     browser.cookies.update(response.cookies)
+    return browser
+
+
+def test_joining_from_the_page_creates_a_pending_account_and_signs_in(env: Env) -> None:
+    form = {"email": "new@bu.edu", "password": "a good password", "password_again": "a good password"}
+    assert page(env).post("/join", data={**form, "password_again": "different"}).status_code == 422
+    joined = page(env).post("/join", data=form)
+    assert joined.headers["location"] == "/onboarding/consent"
+    assert env.s.live.account_for_email("new@bu.edu").status == "pending"
+    assert page(env).post("/join", data=form).status_code == 409
+    assert "Sign in" in page(env).get("/").text and 'href="/join"' in page(env).get("/").text
+
+
+def test_signing_in_from_the_page(env: Env) -> None:
+    env.login("jane@bu.edu")
+    wrong = sign_in_page(env, "jane@bu.edu", "wrong password")
+    unknown = sign_in_page(env, "nobody@bu.edu", PASSWORD)
+    assert wrong.status_code == unknown.status_code == 401
+    assert "don't match an account" in unescape(wrong.text) and 'value="jane@bu.edu"' in wrong.text
+    assert sign_in_page(env, "jane@bu.edu", PASSWORD).headers["location"] == "/onboarding/consent"
+
+
+def test_the_admin_script_sets_a_password_and_admins_land_on_admin(env: Env) -> None:
+    done = set_password_with_script(env, "lead@bu.edu", "correct horse")
+    assert done.returncode == 0, done.stderr
+    response = sign_in_page(env, "Lead@BU.edu", "correct horse")
+    assert response.headers["location"] == "/onboarding/consent"
+    browser = browser_with(env, response)
     html = browser.get("/onboarding/consent").text
-    browser.post("/onboarding/consent", data={"csrf_token": csrf_of(html), "version": "2", "agree": "yes"})
+    assert browser.post("/onboarding/consent", data={"csrf_token": csrf_of(html), "version": "2", "agree": "yes"}).headers["location"] == "/admin"
     assert browser.get("/admin/users").status_code == 200
-    assert password_login(env, "lead@bu.edu", "correct horse").headers["location"] == "/admin"
-    assert any(e["action"] == "password_sign_in" for e in env.s.live.audit_entries())
+    assert sign_in_page(env, "lead@bu.edu", "correct horse").headers["location"] == "/admin"
+    assert set_password_with_script(env, "x@bu.edu", "short").returncode != 0
 
 
-def test_wrong_passwords_and_non_admins_get_the_same_answer_and_are_limited(env: Env) -> None:
-    set_password_with_script(env, "lead@bu.edu", "correct horse")
-    api, user_id = env.user("user@bu.edu")
-    from app.security import hash_password
-
-    env.s.live.set_password_hash(env.s.live.account_for_email("user@bu.edu").account_id, hash_password("user password"))
-    answers = [
-        password_login(env, "lead@bu.edu", "wrong password"),
-        password_login(env, "nobody@bu.edu", "correct horse"),
-        password_login(env, "user@bu.edu", "user password"),  # Not an admin.
-        password_login(env, "not an email", "x"),
-    ]
-    for response in answers:
-        assert response.status_code == 401
-        assert "match an administrator account" in unescape(response.text)
-        assert "set-cookie" not in response.headers
-    codes = [password_login(env, "lead@bu.edu", "wrong").status_code for _ in range(5)]
-    assert codes[-1] == 429  # Five wrong tries per email in 15 minutes, one already used above.
+def test_changing_your_password_needs_the_current_one_and_signs_out_elsewhere(env: Env) -> None:
+    api = env.login("jane@bu.edu")
+    other_device = sign_in_page(env, "jane@bu.edu", PASSWORD)
+    browser = browser_with(env, sign_in_page(env, "jane@bu.edu", PASSWORD))
+    html = browser.get("/password").text
+    form = {"csrf_token": csrf_of(html), "current_password": "wrong", "new_password": "a new password", "new_password_again": "a new password"}
+    assert browser.post("/password", data=form).status_code == 403
+    assert browser.post("/password", data={**form, "current_password": PASSWORD, "new_password_again": "x"}).status_code == 422
+    assert browser.post("/password", data={**form, "current_password": PASSWORD, "new_password": "short", "new_password_again": "short"}).status_code == 422
+    assert browser.post("/password", data={**form, "current_password": PASSWORD}).headers["location"] == "/password?done=1"
+    assert browser.get("/onboarding/consent").status_code == 200  # Still signed in here.
+    assert browser_with(env, other_device).get("/onboarding/consent").headers["location"] == "/"  # Signed out there.
+    assert api.get("/me").status_code == 401
+    assert sign_in_page(env, "jane@bu.edu", "a new password").status_code == 303
 
 
-def test_admins_change_their_password_with_the_current_one(env: Env) -> None:
-    set_password_with_script(env, ADMIN_EMAIL, "first password")
+def test_admins_reset_forgotten_passwords_to_a_temporary_one(env: Env) -> None:
+    member_browser, user_id = member(env, "jane@bu.edu", "woman", ("man",))
+    account_id = env.s.live.account_for_user(user_id).account_id
     admin = admin_page(env)
-    html = admin.get("/admin/password").text
-    form = {"csrf_token": csrf_of(html), "current_password": "wrong", "new_password": "second password", "new_password_again": "second password"}
-    assert admin.post("/admin/password", data=form).status_code == 403
-    assert admin.post("/admin/password", data={**form, "current_password": "first password", "new_password_again": "other"}).status_code == 422
-    assert admin.post("/admin/password", data={**form, "current_password": "first password", "new_password": "short", "new_password_again": "short"}).status_code == 422
-    assert admin.post("/admin/password", data={**form, "current_password": "first password"}).headers["location"] == "/admin/password?done=1"
-    assert password_login(env, ADMIN_EMAIL, "first password").status_code == 401
-    assert password_login(env, ADMIN_EMAIL, "second password").status_code == 303
-    assert any(e["action"] == "password_change" for e in env.s.live.audit_entries())
-
-
-def test_the_password_script_refuses_short_passwords(env: Env) -> None:
-    done = set_password_with_script(env, "lead@bu.edu", "short")
-    assert done.returncode != 0 and "at least 8" in done.stderr
-    assert env.s.live.account_for_email("lead@bu.edu") is None
+    html = admin.get("/admin/approvals").text
+    assert f"/admin/approvals/{account_id}/reset-password" in html  # Approved people are listed too.
+    shown = admin.post(f"/admin/approvals/{account_id}/reset-password", data={"csrf_token": csrf_of(html)})
+    temporary = re.search(r"<code>([a-z0-9-]+)</code>", shown.text).group(1)
+    assert re.fullmatch(r"[a-z2-9]{4}-[a-z2-9]{4}-[a-z2-9]{4}", temporary)
+    assert temporary not in "\n".join(sqlite3.connect(env.settings.main_db).iterdump())
+    assert member_browser.get("/discover").headers["location"] == "/"  # Signed out everywhere.
+    assert sign_in_page(env, "jane@bu.edu", PASSWORD).status_code == 401
+    response = sign_in_page(env, "jane@bu.edu", temporary)
+    assert response.headers["location"] == "/password"
+    browser = browser_with(env, response)
+    assert browser.get("/discover").headers["location"] == "/password"  # Nothing else until it's changed.
+    api = env.client()
+    api.cookies.update(response.cookies)
+    assert api.get("/me").status_code == 403
+    html = browser.get("/password").text
+    assert "current_password" not in html
+    done = browser.post("/password", data={"csrf_token": csrf_of(html), "new_password": "my own password", "new_password_again": "my own password"})
+    assert done.headers["location"] == "/discover"
+    assert browser.get("/discover").status_code == 200
+    assert {"password_reset", "password_change"} <= {e["action"] for e in env.s.live.audit_entries()}

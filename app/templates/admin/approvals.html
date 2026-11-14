@@ -4,7 +4,7 @@
 {% block content %}
 {% include "admin/_nav.html" %}
 <h1>Approvals</h1>
-{% for status, heading in [("pending", "Waiting for review"), ("suspended", "Suspended"), ("rejected", "Rejected")] %}
+{% for status, heading in [("pending", "Waiting for review"), ("approved", "Approved"), ("suspended", "Suspended"), ("rejected", "Rejected")] %}
 <h2>{{ heading }}</h2>
 {% for item in lists[status] %}
 <article>
@@ -26,6 +26,7 @@
       <button type="submit">{{ label }}</button>
     </form>
     {% endif %}{% endfor %}
+    <form method="post" action="/admin/approvals/{{ item.account.account_id }}/reset-password">{% include "partials/csrf.html" %}<button type="submit" class="quiet">Reset password</button></form>
   </div>
 </article>
 {% else %}

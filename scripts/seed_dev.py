@@ -4,8 +4,8 @@
 
 It uses the same settings as the server (APP_MAIN_DB and so on), and does nothing if the
 fake users already exist. Some users have no religion, and a few pairs have matched, so
-every page has something to show. Sign in as any printed email:
-request a link, and the console email sender prints it.
+every page has something to show. Sign in as any printed email, with the password
+DEV_PASSWORD below. If the users already exist, it only makes sure they have that password.
 """
 
 import random
@@ -16,11 +16,13 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from app.config import Settings  # noqa: E402
+from app.security import hash_password  # noqa: E402
 from live_store import LiveStore  # noqa: E402
 from manager import ProfileManager  # noqa: E402
 from models import LIVE_RUN_ID  # noqa: E402
 
 N_USERS = 40
+DEV_PASSWORD = "dev-password"  # Only for these fake local users. Never use it anywhere real.
 SEED = 0
 FIRST_NAMES = ["Alex", "Blake", "Casey", "Drew", "Emery", "Finley", "Gray", "Harper", "Indy", "Jordan",
                "Kai", "Logan", "Morgan", "Noor", "Oakley", "Parker", "Quinn", "Riley", "Sage", "Taylor"]
@@ -31,6 +33,14 @@ RELIGIONS = ["catholic", "jewish", "muslim", "hindu", "buddhist", "atheist", "ag
 
 
 
+def set_dev_passwords(live: LiveStore) -> None:
+    hashed = hash_password(DEV_PASSWORD)  # The same hash for all of them is fine for fake users.
+    for i in range(1, N_USERS + 1):
+        account = live.account_for_email(f"dev.user{i:02d}@bu.edu")
+        if account is not None and live.password_hash(account.account_id) is None:
+            live.set_password_hash(account.account_id, hashed)
+
+
 def main() -> None:
     settings = Settings.from_env()
     settings.main_db.parent.mkdir(parents=True, exist_ok=True)
@@ -39,7 +49,8 @@ def main() -> None:
     rng = random.Random(SEED)
 
     if live.account_for_email("dev.user01@bu.edu") is not None:
-        print("Fake users already exist. Delete the database to start over.")
+        set_dev_passwords(live)
+        print(f"Fake users already exist, so only their passwords were set, to {DEV_PASSWORD!r}.")
         return
 
     users = []
@@ -106,7 +117,8 @@ def main() -> None:
         matches += 1
 
     print(f"Created {len(users)} approved users and {matches} matches in {settings.main_db}")
-    print("Sign in as any of dev.user01@bu.edu to dev.user40@bu.edu. The console prints the link.")
+    set_dev_passwords(live)
+    print(f"Sign in as any of dev.user01@bu.edu to dev.user40@bu.edu, with the password {DEV_PASSWORD!r}.")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Join the study{% endblock %}
+{% block content %}
+<p class="kicker">Join</p>
+<h1>Join the study</h1>
+{% if closed %}
+<p class="notice">New sign-ups are closed right now.</p>
+{% else %}
+<p>Create an account with your email and a password. After you agree to the consent form and fill in your profile, the research team reviews your account by hand. We never send you email.</p>
+<article>
+  <form method="post" action="/join">
+    {% if error %}<p class="error" role="alert" id="join-error">{{ error }}</p>{% endif %}
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email" autocomplete="username" required value="{{ email }}" placeholder="you@example.com" {% if error %}aria-describedby="join-error"{% endif %}>
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="new-password" minlength="8" maxlength="200" required aria-describedby="password-hint">
+    <small id="password-hint">At least 8 characters. A short phrase is easy to remember and hard to guess.</small>
+    <label for="password_again">Password again</label>
+    <input id="password_again" name="password_again" type="password" autocomplete="new-password" minlength="8" maxlength="200" required>
+    <button type="submit" class="wide">Create my account</button>
+  </form>
+</article>
+{% endif %}
+<p>Already joined? <a href="/">Sign in</a>.</p>
+{% endblock %}

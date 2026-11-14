@@ -38,7 +38,6 @@ class Settings:
     study_timezone: str = "America/New_York"
     cookie_secure: bool = True
     session_days: int = 14
-    login_token_minutes: int = 15
     enabled_matchers: tuple[str, ...] = ("random",)
     default_matcher: str = "random"  # Serves users who opt out of the experiment.
     matcher_seed: int | None = None
@@ -50,16 +49,8 @@ class Settings:
     admin_step_up_minutes: int = 60
     export_salt: str = field(default="", repr=False)
     source_repo_url: str = ""
-    email_sender: str = "console"
-    smtp_host: str = ""
-    smtp_port: int = 587
-    smtp_username: str = ""
-    smtp_password: str = field(default="", repr=False)
-    smtp_from: str = ""
-    smtp_starttls: bool = True
     # Requests per window. They live in memory, so they assume one server process.
-    login_requests_per_email: int = 3
-    login_requests_per_ip: int = 20
+    login_requests_per_ip: int = 30  # Failed sign-ins and sign-ups per address, per window.
     login_window_seconds: int = 900
 
     @classmethod
@@ -76,8 +67,8 @@ class Settings:
             match_threshold=float(os.environ.get("MATCH_THRESHOLD", cls.match_threshold)),
             study_timezone=os.environ.get("STUDY_TIMEZONE", cls.study_timezone),
             cookie_secure=_bool("COOKIE_SECURE", True),
+            login_requests_per_ip=int(os.environ.get("LOGIN_REQUESTS_PER_IP", cls.login_requests_per_ip)),
             session_days=int(os.environ.get("SESSION_DAYS", cls.session_days)),
-            login_token_minutes=int(os.environ.get("LOGIN_TOKEN_MINUTES", cls.login_token_minutes)),
             enabled_matchers=_list("ENABLED_MATCHERS", "random"),
             default_matcher=os.environ.get("DEFAULT_MATCHER", cls.default_matcher),
             matcher_seed=int(seed) if seed else None,
@@ -88,11 +79,4 @@ class Settings:
             admin_step_up_minutes=int(os.environ.get("ADMIN_STEP_UP_MINUTES", cls.admin_step_up_minutes)),
             export_salt=os.environ.get("EXPORT_SALT", ""),
             source_repo_url=os.environ.get("SOURCE_REPO_URL", ""),
-            email_sender=os.environ.get("EMAIL_SENDER", cls.email_sender),
-            smtp_host=os.environ.get("SMTP_HOST", ""),
-            smtp_port=int(os.environ.get("SMTP_PORT", cls.smtp_port)),
-            smtp_username=os.environ.get("SMTP_USERNAME", ""),
-            smtp_password=os.environ.get("SMTP_PASSWORD", ""),
-            smtp_from=os.environ.get("SMTP_FROM", ""),
-            smtp_starttls=_bool("SMTP_STARTTLS", True),
         )

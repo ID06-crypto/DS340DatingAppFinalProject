@@ -1,4 +1,4 @@
-"""Magic-link sign-in, consent, sign-out, and account deletion (JSON API)."""
+"""Sign-up and sign-in with a password, consent, sign-out, and account deletion (JSON API)."""
 
 from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, ConfigDict
@@ -11,13 +11,16 @@ from live_store import Account, sha256
 
 router = APIRouter()
 
-# The same reply for every address, so it can't reveal who has an account or a valid email.
-GENERIC_REPLY = {"message": "If that address can sign in, a link is on its way."}
-
-
-class LinkRequest(BaseModel):
+class Credentials(BaseModel):
     model_config = ConfigDict(extra="forbid")
     email: str
+    password: str
+
+
+class PasswordChange(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    current_password: str | None = None
+    new_password: str
 
 
 class ConsentRequest(BaseModel):
@@ -36,21 +39,38 @@ def set_session_cookie(response: Response, session_id: str, s: Services) -> None
     )
 
 
-@router.post("/auth/request-link")
-def request_link(body: LinkRequest, request: Request, s: Services = Depends(services)) -> dict:
-    actions.request_login_link(s, body.email, request.client.host if request.client else "unknown")
-    return GENERIC_REPLY
+def _client(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
 
 
-@router.get("/auth/verify")
-def verify(token: str, response: Response, s: Services = Depends(services)) -> dict:
-    account, session_id = actions.sign_in(s, token)
-    set_session_cookie(response, session_id, s)
+def _signed_in_reply(s: Services, account: Account) -> dict:
     return {
         "status": account.status,
         "role": account.role,
         "consent_required": account.consent_version != s.settings.consent_version,
+        "must_change_password": s.live.must_change_password(account.account_id),
     }
+
+
+@router.post("/auth/signup", status_code=201)
+def signup(body: Credentials, request: Request, response: Response, s: Services = Depends(services)) -> dict:
+    account, session_id = actions.sign_up(s, body.email, body.password, _client(request))
+    set_session_cookie(response, session_id, s)
+    return _signed_in_reply(s, account)
+
+
+@router.post("/auth/login")
+def login(body: Credentials, request: Request, response: Response, s: Services = Depends(services)) -> dict:
+    account, session_id = actions.password_sign_in(s, body.email, body.password, _client(request))
+    set_session_cookie(response, session_id, s)
+    return _signed_in_reply(s, account)
+
+
+@router.post("/auth/password")
+def change_password(body: PasswordChange, request: Request, account: Account = Depends(current_account), s: Services = Depends(services)) -> dict:
+    session_id = request.cookies.get(SESSION_COOKIE)
+    actions.change_password(s, account, body.current_password, body.new_password, sha256(session_id) if session_id else None)
+    return {"changed": True}
 
 
 @router.get("/auth/consent")

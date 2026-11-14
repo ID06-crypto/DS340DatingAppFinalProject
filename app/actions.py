@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from app.security import hash_password, new_secret, normalize_email, password_problem, verify_password
+from app.security import hash_password, new_secret, normalize_email, password_problem, temporary_password, verify_password
 from app.services import Services
 from live_store import Account, Impression, Match, Report, sha256, utc_now
 from matching import PublicView
@@ -39,78 +39,103 @@ def to_rating_scale(unit: float) -> float:
     return MIN_SCORE + unit * (MAX_SCORE - MIN_SCORE)
 
 
-# Sign-in
+# Sign-in. Everyone signs in with an email and password. The app sends no email: admins
+# review each new account by hand, and reset forgotten passwords.
+
+WRONG_PASSWORD = "That email and password don't match an account."
+TOO_MANY = "Too many attempts. Wait 15 minutes and try again."
 
 
-def request_login_link(s: Services, raw_email: str, client_ip: str) -> None:
-    """Send a sign-in link if allowed. Callers always give the same reply, whatever happens."""
-    if not s.login_per_ip.allow(client_ip):
-        raise ActionError(429, "Too many requests. Try again later.")
-    email = normalize_email(raw_email, s.settings.allowed_email_domains)
-    if email is None or not s.login_per_email.allow(email):
-        return
-    admins = {normalize_email(e) for e in s.settings.admin_emails}
-    if s.controls().signups_paused and email not in admins and s.live.account_for_email(email) is None:
-        return  # New signups are paused. Existing accounts can still sign in.
-    token = new_secret()
-    s.live.save_login_token(sha256(token), email, utc_now() + timedelta(minutes=s.settings.login_token_minutes))
-    link = f"{s.settings.site_url}/auth/verify?token={token}"
-    s.send_email(
-        email,
-        "Your sign-in link",
-        f"Sign in with this link. It works once and expires in {s.settings.login_token_minutes} minutes.\n\n{link}\n",
-    )
 
 
-def sign_in(s: Services, token: str) -> tuple[Account, str]:
-    """Use a sign-in link. Returns the account and a new session id for the cookie."""
-    email = s.live.use_login_token(sha256(token))
-    if email is None:
-        raise ActionError(400, "This link is invalid, used, or expired. Request a new one.")
-    admins = {normalize_email(e) for e in s.settings.admin_emails}
-    account, _ = s.live.get_or_create_account(email, admin=email in admins)
+def _new_session(s: Services, account: Account) -> str:
     session_id = new_secret()
     s.live.create_session(sha256(session_id), account.account_id, utc_now() + timedelta(days=s.settings.session_days))
-    return account, session_id
+    return session_id
 
 
-WRONG_PASSWORD = "That email and password don't match an administrator account."
+def sign_up(s: Services, raw_email: str, password: str, client_ip: str) -> tuple[Account, str]:
+    """Create an account with a password, and sign it in. It waits for an admin to
+    approve it, except for ADMIN_EMAILS, which are approved admins straight away."""
+    if s.login_per_ip.exceeded(client_ip):
+        raise ActionError(429, TOO_MANY)
+    try:
+        email = normalize_email(raw_email, s.settings.allowed_email_domains)
+        if email is None:
+            raise ActionError(422, "Enter a valid email address.")
+        problem = password_problem(password)
+        if problem:
+            raise ActionError(422, problem)
+        admins = {normalize_email(e) for e in s.settings.admin_emails}
+        if s.controls().signups_paused and email not in admins:
+            raise ActionError(403, "New sign-ups are closed right now.")
+        account, created = s.live.get_or_create_account(email, admin=email in admins)
+        if not created:
+            raise ActionError(409, "There's already an account with that email. Sign in instead, or ask the research team to reset your password.")
+    except ActionError:
+        s.login_per_ip.record(client_ip)  # Only failures count, so a class can join together.
+        raise
+    s.live.set_password_hash(account.account_id, hash_password(password))
+    return account, _new_session(s, account)
 
 
 def password_sign_in(s: Services, raw_email: str, password: str, client_ip: str) -> tuple[Account, str]:
-    """Sign an admin in with their password. Only admins with a password set can.
+    """Sign in with an email and password.
 
     Every failure gives the same message, and takes about as long, so it doesn't reveal
-    which emails are admins. Wrong attempts are limited per email and per address.
+    which emails have accounts. Wrong attempts are limited per email and per address.
     """
-    if not s.login_per_ip.allow(client_ip):
-        raise ActionError(429, "Too many attempts. Wait 15 minutes and try again.")
     email = normalize_email(raw_email, s.settings.allowed_email_domains)
-    if email is not None and not s.password_per_email.allow(email):
-        raise ActionError(429, "Too many attempts. Wait 15 minutes and try again.")
+    if s.login_per_ip.exceeded(client_ip) or (email is not None and s.password_per_email.exceeded(email)):
+        raise ActionError(429, TOO_MANY)
     account = s.live.account_for_email(email) if email else None
     stored = s.live.password_hash(account.account_id) if account else None
-    matches = verify_password(password, stored)
-    if not matches or account is None or account.role != "admin" or account.status != "approved":
+    if not verify_password(password, stored) or account is None:
+        # Only failures count, so people sharing a campus network aren't locked out.
+        s.login_per_ip.record(client_ip)
+        if email is not None:
+            s.password_per_email.record(email)
         raise ActionError(401, WRONG_PASSWORD)
-    session_id = new_secret()
-    s.live.create_session(sha256(session_id), account.account_id, utc_now() + timedelta(days=s.settings.session_days))
-    s.live.audit(account.account_id, "password_sign_in", None, {})
-    return account, session_id
+    return account, _new_session(s, account)
 
 
-def set_admin_password(s: Services, admin: Account, current: str | None, new: str) -> None:
-    """Set or change an admin's password. Changing one needs the current password."""
-    if admin.role != "admin":
-        raise ActionError(403, "Only administrators have passwords.")
-    stored = s.live.password_hash(admin.account_id)
-    if stored is not None and not verify_password(current or "", stored):
+def confirm_password(s: Services, account: Account, password: str, client_ip: str) -> str:
+    """Re-check the signed-in person's password, for admin step-up. Returns a fresh session."""
+    if s.login_per_ip.exceeded(client_ip) or s.password_per_email.exceeded(account.email_normalized):
+        raise ActionError(429, TOO_MANY)
+    if not verify_password(password, s.live.password_hash(account.account_id)):
+        s.login_per_ip.record(client_ip)
+        s.password_per_email.record(account.email_normalized)
+        raise ActionError(401, "That password isn't right.")
+    return _new_session(s, account)
+
+
+def change_password(s: Services, account: Account, current: str | None, new: str, keep_session_hash: str | None) -> None:
+    """Change your own password. It needs the current one, unless an admin just reset it.
+    Every other session for the account is signed out."""
+    stored = s.live.password_hash(account.account_id)
+    reset = s.live.must_change_password(account.account_id)
+    if stored is not None and not reset and not verify_password(current or "", stored):
         raise ActionError(403, "Your current password is wrong.")
     problem = password_problem(new)
     if problem:
         raise ActionError(422, problem)
-    s.live.set_password_hash(admin.account_id, hash_password(new))
-    s.live.audit(admin.account_id, "password_change", admin.account_id, {})
+    s.live.set_password_hash(account.account_id, hash_password(new))
+    s.live.end_other_sessions(account.account_id, keep_session_hash)
+    s.live.audit(account.account_id, "password_change", account.account_id, {})
+
+
+def reset_password(s: Services, admin: Account, account_id: str) -> str:
+    """Give someone a temporary password, which they must change when they next sign in.
+    Signs them out everywhere. Returns the temporary password, to show the admin once."""
+    target = s.live.get_account(account_id)
+    if target is None:
+        raise ActionError(404, "Account not found")
+    temporary = temporary_password()
+    s.live.set_password_hash(account_id, hash_password(temporary), must_change=True)
+    s.live.end_other_sessions(account_id)
+    s.live.audit(admin.account_id, "password_reset", account_id, {})
+    return temporary
 
 
 def give_consent(s: Services, account: Account, version: str) -> None:
@@ -328,21 +353,7 @@ def rate(s: Services, account: Account, impression_id: str, score: float) -> Rat
         return RatingOutcome(False, None)
     existing = s.live.active_match_between(viewer, impression.target_id)
     match = existing or s.live.create_match(viewer, impression.target_id)
-    if existing is None:
-        _email_new_match(s, match)
     return RatingOutcome(True, match.match_id)
-
-
-def _email_new_match(s: Services, match: Match) -> None:
-    """One email per participant, with no names, only if they want it."""
-    for user_id in (match.user_a, match.user_b):
-        account = s.live.account_for_user(user_id)
-        if account is not None and account.notify_on_match:
-            s.send_email(
-                account.email_normalized,
-                "You have a new match",
-                f"You have a new match.\n\n{s.settings.site_url}/matches\n",
-            )
 
 
 # Surveys
@@ -451,7 +462,6 @@ def export_my_data(s: Services, account: Account) -> dict[str, Any]:
             "consent_version": account.consent_version,
             "consent_at": account.consent_at,
             "experiment_opt_out": account.experiment_opt_out,
-            "notify_on_match": account.notify_on_match,
             "paused": account.paused,
         },
         "profile": profile,

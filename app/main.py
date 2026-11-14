@@ -16,10 +16,9 @@ from app import routes_admin, routes_auth, routes_feed, routes_me, routes_social
 from app.web import PageRouting, Redirect, is_page, redirect, render
 from app.actions import ActionError
 from app.config import Settings
-from app.emails import EmailSender, email_sender_for
 from app.matchers import build_matchers
 from app.ratelimit import RateLimiter
-from app.security import install_log_redaction, install_security
+from app.security import install_security
 from app.services import Services
 from live_store import LiveStore
 from manager import ProfileManager
@@ -51,7 +50,6 @@ def refuse_agent_databases(settings: Settings) -> None:
 
 def create_app(
     settings: Settings | None = None,
-    email_sender: EmailSender | None = None,
     rng: random.Random | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
@@ -63,20 +61,18 @@ def create_app(
         settings=settings,
         manager=manager,
         live=LiveStore(settings.main_db),
-        email_sender=email_sender or email_sender_for(settings),
         matchers=build_matchers(settings.enabled_matchers, settings.default_matcher, rng),
         rng=rng,
-        login_per_email=RateLimiter(settings.login_requests_per_email, settings.login_window_seconds),
         login_per_ip=RateLimiter(settings.login_requests_per_ip, settings.login_window_seconds),
     )
     services.consent_text()  # Fail at startup, not on first use, if the text is missing.
     services.initialize_controls()
     services.give_display_names()
+    services.live.adopt_admin_passwords()
 
     app = FastAPI(title="Matching study", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.services = services
     install_security(app, settings.site_url, settings.cookie_secure)
-    install_log_redaction()
 
     error_pages = {
         400: ("Something's wrong with that request", "Please go back and try again."),

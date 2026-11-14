@@ -15,7 +15,6 @@ SESSION_COOKIE = "session"
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 _LOCAL_PART = re.compile(r"[a-z0-9._%-]+")
 _DOMAIN = re.compile(r"[a-z0-9-]+(\.[a-z0-9-]+)+")
-_TOKEN_IN_TEXT = re.compile(r"(token=)[^&\s\"']+")
 
 # Only this site's own files: no inline scripts or styles, and nothing from other origins.
 CONTENT_SECURITY_POLICY = (
@@ -77,6 +76,12 @@ def verify_password(password: str, stored: str | None) -> bool:
     return bool(expected_bytes) and hmac.compare_digest(digest, expected_bytes)
 
 
+def temporary_password() -> str:
+    """A temporary password an admin can read out or paste, like "kq7m-x2pd-9wfa"."""
+    alphabet = "abcdefghjkmnpqrstuvwxyz23456789"  # No 0/o, 1/l/i, which are easy to misread.
+    return "-".join("".join(secrets.choice(alphabet) for _ in range(4)) for _ in range(3))
+
+
 def password_problem(password: str) -> str | None:
     """Why a new password isn't allowed, or None."""
     if len(password) < MIN_PASSWORD_LENGTH:
@@ -134,23 +139,3 @@ def install_security(app, site_url: str, secure: bool) -> None:
         if secure:
             response.headers.setdefault("Strict-Transport-Security", "max-age=31536000")
         return response
-
-
-class RedactTokens(logging.Filter):
-    """Removes login tokens from access-log lines, since /auth/verify carries one."""
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        if isinstance(record.args, tuple):
-            record.args = tuple(
-                _TOKEN_IN_TEXT.sub(r"\1[redacted]", arg) if isinstance(arg, str) else arg
-                for arg in record.args
-            )
-        record.msg = _TOKEN_IN_TEXT.sub(r"\1[redacted]", str(record.msg))
-        return True
-
-
-def install_log_redaction() -> None:
-    for name in ("uvicorn.access", "uvicorn.error"):
-        logger = logging.getLogger(name)
-        if not any(isinstance(f, RedactTokens) for f in logger.filters):
-            logger.addFilter(RedactTokens())

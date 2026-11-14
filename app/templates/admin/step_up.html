@@ -2,7 +2,12 @@
 {% block title %}Confirm it's you{% endblock %}
 {% block content %}
 <h1>Confirm it's you</h1>
-<p>Admin pages need a sign-in from the last hour. We'll email a new link to your address.</p>
-<form method="post" action="/admin/step-up">{% include "partials/csrf.html" %}<button type="submit">Email me a sign-in link</button></form>
-<p>Or <a href="/admin/login">sign in with your password</a>.</p>
+<p>Admin pages need a sign-in from the last hour. Enter your password to continue.</p>
+<form method="post" action="/admin/step-up">
+  {% include "partials/csrf.html" %}
+  {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+  <label for="password">Password</label>
+  <input id="password" name="password" type="password" autocomplete="current-password" required>
+  <button type="submit">Continue</button>
+</form>
 {% endblock %}

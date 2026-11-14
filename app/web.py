@@ -110,6 +110,10 @@ def page_account(request: Request, s: Services = Depends(services)) -> Account:
     if account is None:
         raise Redirect("/")
     request.state.account = account
+    # After an admin resets a password, the temporary one must be changed before anything else.
+    path = request.url.path.removeprefix("/ui")
+    if path not in ("/password", "/logout") and s.live.must_change_password(account.account_id):
+        raise Redirect("/password")
     return account
 
 

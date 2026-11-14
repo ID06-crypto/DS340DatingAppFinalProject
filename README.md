@@ -321,7 +321,7 @@ To rebuild the original 10,000 users, delete the root `main.db*` and `personas.d
 
 ## The live app
 
-A FastAPI app for the study, with server-rendered pages and a JSON API that share the same rules in `app/actions.py`. It handles magic-link sign-in by email, onboarding and an admin approval queue, Discover (one person at a time), matches, blocks and reports, account settings, and admin analytics.
+A FastAPI app for the study, with server-rendered pages and a JSON API that share the same rules in `app/actions.py`. It handles sign-up and sign-in with an email and password, onboarding and an admin approval queue, Discover (one person at a time), matches, blocks and reports, account settings, and admin analytics.
 
 ### Design rules
 
@@ -329,7 +329,7 @@ This is a free student research project, built as a response to engagement-drive
 
 - No streaks, no "someone liked you" teasers, no badge counts, and no infinite scroll.
 - No online, typing, or read indicators.
-- No re-engagement or reminder emails. The only emails are sign-in links and one "new match" email.
+- No emails at all: no reminders, no re-engagement, and no match notifications. Accounts use a password, and admins review each one by hand.
 - No skip button. Reloading Discover shows the same person again.
 - No ads, no tracking scripts, and nothing loaded from other sites. HTMX, Chart.js, and the Caveat and Inter fonts (from `@fontsource`, under the SIL Open Font License) are copied into `static/vendor/`, at pinned versions checked against npm's published checksums. The styles are hand-written in `static/app.css`, with no CSS framework.
 - One person at a time, with a calm end state when nobody's left, and no prompts to come back.
@@ -338,11 +338,11 @@ This is a free student research project, built as a response to engagement-drive
 
 ```bash
 python scripts/seed_dev.py   # Optional: 40 fake approved users, with some matches.
-EMAIL_SENDER=console COOKIE_SECURE=false ADMIN_EMAILS=you@bu.edu EXPORT_SALT=dev-salt \
+COOKIE_SECURE=false ADMIN_EMAILS=you@bu.edu EXPORT_SALT=dev-salt \
     uvicorn --factory app.main:create_app --reload --no-access-log
 ```
 
-Open http://localhost:8000 in a browser, enter an email (`dev.user01@bu.edu` for a seeded user, or your admin email), and open the sign-in link the terminal prints. Run the tests with `pytest`.
+Open http://localhost:8000 in a browser. Sign in as a seeded user (`dev.user01@bu.edu` to `dev.user40@bu.edu`, password `dev-password`), or choose "Join the study" to make an account. To make yourself an admin, run `python scripts/set_admin_password.py you@bu.edu`. Run the tests with `pytest`.
 
 **Pages and the API share URLs.** A browser asking for HTML, or an HTMX request, gets the page at `/me`, `/matches`, `/admin`, and so on. Any other request gets the JSON API at the same URL, unchanged. Internally the pages live under `/ui`. API clients must send an `Origin` header matching `SITE_URL` with every POST, PUT, and DELETE. With curl, add `-H "Origin: http://localhost:8000"`.
 
@@ -379,7 +379,14 @@ The point of the live study is a true record of how much each participant likes 
 
 **Display names.** Nobody sees anyone's real name. When someone creates a profile, the app gives them a random first name from the list for their gender in `app/fake_names.py` (nonbinary participants get one from both lists), avoiding names already in use until a list runs out. The profile's `name` holds that display name, so every page, the matching algorithms, and the exports only ever see it. The real name is kept in the `private_names` table, and only the person (on Me and Edit profile, and in their data download) and admins (on approvals and `/admin/accounts`) see it. Changing gender gives a new name from the new list. People who joined before this existed get a name when the server starts.
 
-**Admin passwords.** Admins can sign in at `/admin/login` with a password, as well as with an email link. Set one with `python scripts/set_admin_password.py someone@bu.edu`, which asks for it twice, creates the account if needed, and makes it an approved admin. Admins change their own password on Admin → Password, which needs the current one. Passwords are stored only as scrypt hashes (`admin_passwords` table), must be at least 8 characters, and wrong attempts are limited to 5 per email and 20 per address every 15 minutes. Every sign-in and change is audited.
+**Accounts and passwords. The app never sends email.** People join at `/join` with an email and a password, agree to the consent form, fill in their profile, and wait for an admin to approve them by hand. Everyone, admins included, signs in on the start page.
+
+- Passwords are stored only as scrypt hashes, in the `passwords` table, and must be at least 8 characters.
+- Wrong passwords are limited to 5 per email and `LOGIN_REQUESTS_PER_IP` per address every 15 minutes. Only failures count, so people sharing a campus network aren't locked out.
+- People change their password on Me → Change password, which needs the current one and signs them out everywhere else.
+- **Forgotten passwords:** an admin opens Approvals, finds the person, and chooses Reset password. The page shows a temporary password once, like `kq7m-x2pd-9wfa`, for the admin to pass on in person or by their own email. The person is signed out everywhere, and must choose a new password as soon as they sign in with it.
+- **Admins:** emails in `ADMIN_EMAILS` become approved admins when they join. `python scripts/set_admin_password.py someone@bu.edu` makes an existing or new account an admin and sets its password, without showing it. Admin pages need a sign-in from the last `ADMIN_STEP_UP_MINUTES`, and otherwise ask for the password again.
+- Sign-ups, sign-ins, password changes, and resets are audited, without the passwords.
 
 **Opting out:** users who opt out always get `DEFAULT_MATCHER`, and their data is left out of all analytics and exports. **Pausing** hides a user from everyone's pool without deleting anything.
 
@@ -413,7 +420,7 @@ The export (`/admin/export.csv` and `.json`) has one row per impression. People 
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `SITE_URL` | `http://localhost:8000` | The site's address. Used in sign-in links and the CSRF check. |
+| `SITE_URL` | `http://localhost:8000` | The site's address. Used in the CSRF check. |
 | `ALLOWED_EMAIL_DOMAINS` | (none) | Optional, comma-separated. Empty means any email domain can sign in. When set, the domain must match exactly, so subdomains aren't allowed. |
 | `ADMIN_EMAILS` | (none) | Comma-separated. These become admins, approved on their first sign-in. |
 | `APP_MAIN_DB` | `data/live/main.db` | The live database, kept apart from the simulated users. |
@@ -423,8 +430,8 @@ The export (`/admin/export.csv` and `.json`) has one row per impression. People 
 | `STUDY_TIMEZONE` | `America/New_York` | The time zone for when rating opens, as admins enter and see it. |
 | `MATCH_THRESHOLD` | `7.0` | Both people must rate each other at least this, on the 1 to 10 scale, to match. |
 | `COOKIE_SECURE` | `true` | Only send the session cookie over HTTPS. Set `false` for local http. |
+| `LOGIN_REQUESTS_PER_IP` | `30` | Failed sign-ins and sign-ups allowed from one address every 15 minutes. Successful ones don't count, so people on the same campus network can all join. |
 | `SESSION_DAYS` | `14` | How long a session lasts. |
-| `LOGIN_TOKEN_MINUTES` | `15` | How long a sign-in link works. |
 | `ENABLED_MATCHERS` | `random` | Comma-separated names from `app/matchers.py`, switched on when the database is new. After that, admins set them and their weights on the controls page. |
 | `DEFAULT_MATCHER` | `random` | Serves users who opt out of the experiment. |
 | `POSITIVE_THRESHOLD` | `7.0` | A rating at or above this counts as positive in analytics (1 to 10). |
@@ -435,17 +442,12 @@ The export (`/admin/export.csv` and `.json`) has one row per impression. People 
 | `EXPORT_SALT` | (none) | Required for exports. Keep it secret and fixed, so pseudonyms stay stable. |
 | `SOURCE_REPO_URL` | (none) | Optional link to the source code on the transparency page. |
 | `MATCHER_SEED` | (random) | Seeds that choice, for reproducible tests. |
-| `EMAIL_SENDER` | `console` | `console` prints links, which is for development only. `smtp` sends real email. |
-| `SMTP_HOST`, `SMTP_PORT` | (none), `587` | The SMTP server. |
-| `SMTP_USERNAME`, `SMTP_PASSWORD` | (none) | SMTP sign-in, if needed. |
-| `SMTP_FROM` | (none) | The sender address. |
-| `SMTP_STARTTLS` | `true` | Use STARTTLS. |
 
 ### Endpoints
 
 | Area | Endpoints | Who can call them |
 | --- | --- | --- |
-| Sign-in | `POST /auth/request-link`, `GET /auth/verify`, `GET` and `POST /auth/consent`, `POST /auth/logout` | Anyone, then signed in |
+| Sign-in | `POST /auth/signup` and `POST /auth/login` (email and password), `POST /auth/password`, `GET` and `POST /auth/consent`, `POST /auth/logout` | Anyone, then signed in |
 | Your account | `GET /me`, `DELETE /me` | Signed in. Deleting never needs consent or approval. |
 | Your data | `POST`, `GET`, and `PUT /me/profile`, `GET` and `PUT /me/preferences` | Signed in, with consent. Approval isn't needed. |
 | Feed and ratings | `GET /feed/next`, `POST /ratings` | Approved, with a profile |
@@ -461,7 +463,7 @@ People rate from 1 to 10. Ratings are stored on the same 0 to 1 scale as Jev's, 
 
 | Who | Can see |
 | --- | --- |
-| **Anyone** | Nothing except the consent text. Requesting a link gives the same reply for any address. |
+| **Anyone** | Nothing except the consent text. A wrong password gives the same answer whether or not the email has an account. |
 | **A signed-in user** | Their own email, profile, preferences, and approval status, through `/me`. |
 | **Other approved users** | Your public profile, under your assigned display name, never your real name, but only once you're in their pool, have been shown to them, or have matched with them, and never if either of you has blocked the other. They never see your email, preferences, ratings, or whether you rated them, unless you match. |
 | **Your match** | Your display name and public profile in their Matches list. There's no in-app messaging. |
@@ -469,12 +471,12 @@ People rate from 1 to 10. Ratings are stored on the same 0 to 1 scale as Jev's, 
 | **Matchers** | Public profiles, this run's ratings, and the eligible pool's user IDs. Never preferences, emails, or personas. |
 
 - **Email:** stored only in `accounts`, never on profiles.
-- **Sign-in:** login tokens and session ids are stored only as SHA-256 hashes. A link works once and expires after 15 minutes. The access log is off in the command above, and a filter removes tokens from server logs.
+- **Sign-in:** passwords are stored only as scrypt hashes, and session ids only as SHA-256 hashes. The app sends no email.
 - **Cookies:** `HttpOnly` and `SameSite=Lax`, and `Secure` unless turned off for local http.
 - **CSRF:** API requests that change anything must have an `Origin`, or else a `Referer`, matching `SITE_URL`. Every page form and HTMX request also carries a per-session CSRF token, derived from the session id, so nothing extra is stored. Pages send `Referrer-Policy: no-referrer`, which makes browsers send `Origin: null` on ordinary form posts. Those are accepted only with a valid token, and a foreign `Origin` is always refused.
 - **Security headers:** every response gets `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, and a strict `Content-Security-Policy` that allows only this site's own files, with no inline scripts or styles. Pages and API responses get `Cache-Control: no-store`, and static files can be cached.
 - **Errors:** pages show friendly 403, 404, and 500 pages without internal details. Validation errors never repeat the values that were sent.
-- **Deleting an account:** this removes the profile, preferences, ratings, impressions, matches, surveys, blocks, reports the user filed, sessions, and sign-in links. Reports about the user are kept as safety records, with the user removed. Audit rows are kept, with the user's ids replaced by `[deleted]`.
+- **Deleting an account:** this removes the profile, preferences, ratings, impressions, matches, surveys, blocks, reports the user filed, sessions, and their password. Reports about the user are kept as safety records, with the user removed. Audit rows are kept, with the user's ids replaced by `[deleted]`.
 - **Real people and agents stay apart:** the app uses its own database (`data/live/`). It refuses to start if `APP_MAIN_DB` or `APP_PERSONA_DB` points at any agent database in `paths.py`, or at a database holding agent profiles or personas. The live pool also never includes a profile with `agent` set. A read-only, checksummed snapshot of all agent data taken before the live study is in `archive/agent-data-2026-11-14/` (not in git).
 
 ## Changing the schema
