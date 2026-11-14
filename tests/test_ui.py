@@ -812,3 +812,19 @@ def test_bad_feet_and_inches_explain_themselves(ft: str, inch: str, message: str
     from app.ui import parse_height
     cm, problem = parse_height({"height_unit": "imperial", "height_ft": ft, "height_in": inch})
     assert cm is None and message in problem
+
+
+@pytest.mark.parametrize("status", ["pending", "suspended"])
+def test_an_admin_whose_account_isnt_approved_still_goes_straight_to_admin(env: Env, status: str) -> None:
+    """An account made by an older version can have the admin role without being approved.
+    The role alone decides: no consent, no profile form, straight to the admin pages."""
+    api = env.login(ADMIN_EMAIL)
+    account = env.s.live.account_for_email(ADMIN_EMAIL)
+    with sqlite3.connect(env.settings.main_db) as conn:
+        conn.execute("UPDATE accounts SET status = ?, consent_version = NULL WHERE account_id = ?", (status, account.account_id))
+    browser = page(env, api)
+    assert browser.post("/login", data={"email": ADMIN_EMAIL, "password": PASSWORD}).headers["location"] == "/admin"
+    for path in ("/", "/onboarding/consent", "/onboarding/profile", "/discover"):
+        assert browser.get(path).headers["location"] == "/admin", path
+    assert browser.get("/admin").status_code == 200
+    assert browser.get("/admin/users").status_code == 200

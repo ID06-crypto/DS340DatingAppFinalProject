@@ -13,7 +13,10 @@ ADMINS_DONT_TAKE_PART = "Administrators run the study and don't take part in it.
 
 
 def is_study_admin(account: Account) -> bool:
-    return account.role == "admin" and account.status == "approved"
+    """Admins are made only by scripts/set_admin_password.py, so the role alone decides.
+    An admin's approval status doesn't matter: an account made by an older version, or one
+    that joined as a participant first, can be an admin without being "approved"."""
+    return account.role == "admin"
 
 
 def services(request: Request) -> Services:
@@ -76,9 +79,9 @@ def fresh_sign_in(request: Request, s: Services) -> bool:
     return started is not None and utc_now() - started <= timedelta(minutes=s.settings.admin_step_up_minutes)
 
 
-def admin_account(request: Request, account: Account = Depends(approved_account), s: Services = Depends(services)) -> Account:
+def admin_account(request: Request, account: Account = Depends(current_account), s: Services = Depends(services)) -> Account:
     """An admin who signed in within ADMIN_STEP_UP_MINUTES (a "step-up" sign-in)."""
-    if account.role != "admin":
+    if not is_study_admin(account):
         raise HTTPException(403, "Admins only")
     if not fresh_sign_in(request, s):
         raise HTTPException(403, f"Admins must have signed in within the last {s.settings.admin_step_up_minutes} minutes. Sign in again.")

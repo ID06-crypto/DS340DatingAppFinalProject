@@ -135,8 +135,8 @@ def page_member(account: Account = Depends(page_consented), s: Services = Depend
 
 
 def page_admin_any(account: Account = Depends(page_account)) -> Account:
-    """An approved admin, whether or not they signed in recently."""
-    if account.role != "admin" or account.status != "approved":
+    """An admin, whether or not they signed in recently."""
+    if not is_study_admin(account):
         raise HTTPException(403, "Admins only")
     return account
 
@@ -166,7 +166,7 @@ def render(request: Request, template: str, context: dict[str, Any] | None = Non
         "account": account,
         "csrf": csrf_token(session_id),
         "is_member": False,
-        "is_admin": bool(account and account.role == "admin" and account.status == "approved"),
+        "is_admin": bool(account and is_study_admin(account)),
     }
     s: Services = request.app.state.services
     if account is not None:
