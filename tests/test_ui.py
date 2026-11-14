@@ -743,3 +743,23 @@ def test_every_admin_page_works_with_people_but_no_ratings(env: Env, path: str) 
     member(env, "a@bu.edu", "man", ("woman",))
     member(env, "b@bu.edu", "woman", ("man",))
     assert admin_page(env).get(path).status_code == 200, path
+
+
+@pytest.mark.parametrize("step", ["/onboarding/consent", "/onboarding/profile", "/onboarding/preferences", "/pending"])
+def test_people_partway_through_signing_up_can_sign_out(env: Env, step: str) -> None:
+    """A browser stays signed in for SESSION_DAYS, so coming back resumes sign-up. Every
+    sign-up step must offer Sign out, or nobody else can sign in on that browser."""
+    client = env.login("half@bu.edu")
+    if step != "/onboarding/consent":
+        client.post("/auth/consent", json={"version": "2"})
+    if step in ("/onboarding/preferences", "/pending"):
+        assert client.post("/me/profile", json=profile_body()).status_code in (200, 201)
+    if step == "/pending":
+        assert client.put("/me/preferences", json={"interested_in": ["woman"]}).status_code in (200, 201)
+    page = client.get(step, headers={"Accept": "text/html"})
+    assert page.status_code == 200 and str(page.url).endswith(step), (step, page.url)
+    assert "Sign out" in page.text
+    out = client.post("/logout", data={"csrf_token": csrf_of(page.text)}, headers={"Accept": "text/html"})
+    assert out.status_code == 200
+    landing = client.get("/", headers={"Accept": "text/html"})
+    assert 'action="/login"' in landing.text

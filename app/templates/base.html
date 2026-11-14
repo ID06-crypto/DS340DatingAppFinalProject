@@ -41,6 +41,8 @@
         {% if is_admin %}<li><a href="/admin" {% if nav == "admin" %}aria-current="page"{% endif %}>Admin</a></li>{% endif %}
       </ul>
     </nav>
+    {% elif account and csrf %}
+    <form class="whoami" method="post" action="/logout">{% include "partials/csrf.html" %}<button type="submit" class="quiet">Sign out</button></form>
     {% endif %}
   </header>
   <main id="main" class="{% block main_class %}{% endblock %}">

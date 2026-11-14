@@ -89,6 +89,8 @@ hr { border: 0; height: .6rem; margin: 2rem 0; background: url("/static/img/unde
   gap: 1rem;
 }
 .masthead.wide { max-width: 70rem; }
+.whoami { display: flex; align-items: baseline; gap: .6rem; margin: 0; min-width: 0; }
+.whoami button { padding: .3rem .6rem; font-size: .85rem; }
 .brand { font: 700 1.6rem/1 var(--hand); text-decoration: none; white-space: nowrap; }
 .brand span { font: 500 .62rem/1 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--ink-soft); margin-left: .5rem; vertical-align: .45em; }
 
