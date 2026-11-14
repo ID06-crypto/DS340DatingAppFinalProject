@@ -355,7 +355,7 @@ Open http://localhost:8000 in a browser, enter an email (`dev.user01@bu.edu` for
 | Discover | One profile at a time, with a 1 to 10 slider and number box and no default value. Shows how many people are left. Report and block are in a menu. Everyone eventually sees every other approved participant, whatever their gender. Asking again shows the same person, so nobody can be skipped, and someone who paused while on screen comes back once they unpause. |
 | Matches | Each match's first name and the date you matched. There's no in-app messaging. Unmatch, block, and report are in a menu. |
 | Me | Edit your profile and preferences, see who you've blocked, set match emails, opt out of the experiment, pause, download your data, or delete your account |
-| Admin | Overview, approvals, reports, algorithm comparison, controls, audit log, and export. Each needs a sign-in from the last `ADMIN_STEP_UP_MINUTES`. |
+| Admin | Overview, approvals, users, reports, algorithm comparison, controls, audit log, and export. Each needs a sign-in from the last `ADMIN_STEP_UP_MINUTES`. |
 
 **Surveys:** "Was this worth your time?" from 1 to 5 appears on Discover when nobody's left, and otherwise after every 25th rating, at most once a day. "Was your match with (name) worth your time?" appears on Matches, once per match, once the match is 3 days old. Both can be dismissed.
 
@@ -364,6 +364,16 @@ Open http://localhost:8000 in a browser, enter an email (`dev.user01@bu.edu` for
 **Opting out:** users who opt out always get `DEFAULT_MATCHER`, and their data is left out of all analytics and exports. **Pausing** hides a user from everyone's pool without deleting anything.
 
 ### Analytics
+
+**Scores are 0 to 1 everywhere behind the pages.** People rate from 1 to 10, and each rating is stored as (rating − 1) / 9, the same scale as the simulated agents' ratings. Admin pages, analytics, and the export all use the 0 to 1 scores. Thresholds that people see, `MATCH_THRESHOLD` and `POSITIVE_THRESHOLD`, are still set on the 1 to 10 scale and converted. Only a user's own data download shows their ratings on the 1 to 10 scale they used.
+
+**The Users page** (`/admin/users`, computed in `app/insights.py`) has:
+
+- A heat map of every participant's score for every other participant, grouped by gender and ordered by mean score received, with hatching where nobody has rated yet.
+- A heat map of reciprocal interest: the sum of both people's scores for each other, from 0 to 2, where both have rated.
+- The distributions of scores given and received by each gender, and how often each gender liked each gender.
+- Mean score by height, age, height difference, age gap, looking for, major, job, school, religion, shared interests, and each interest, with Pearson r and the least-squares slope, or η². The page lists the formulas. These are descriptive, since one person's ratings aren't independent.
+
 
 The admin comparison page computes everything with the pure functions in `metrics.py`, over rated impressions where neither person opted out.
 
@@ -435,7 +445,7 @@ People rate from 1 to 10. Ratings are stored on the same 0 to 1 scale as Jev's, 
 | **A signed-in user** | Their own email, profile, preferences, and approval status, through `/me`. |
 | **Other approved users** | Your public profile (first name only), but only once you're in their pool, have been shown to them, or have matched with them, and never if either of you has blocked the other. They never see your email, preferences, ratings, or whether you rated them, unless you match. |
 | **Your match** | Your first name and public profile in their Matches list. There's no in-app messaging. |
-| **Admins** | Emails and profiles in the approval queue, and reports. |
+| **Admins** | Emails and profiles in the approval queue, and reports. On the Users page, every score between participants who haven't opted out, with people as codes (W01, M07), not names. Each view is audited. |
 | **Matchers** | Public profiles, this run's ratings, and the eligible pool's user IDs. Never preferences, emails, or personas. |
 
 - **Email:** stored only in `accounts`, never on profiles.

@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block title %}Users{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block head %}<script src="/static/vendor/chart.umd.js" defer></script><script src="/static/admin.js" defer></script>{% endblock %}
+{% block content %}
+{% include "admin/_nav.html" %}
+<p class="kicker">Participants and their ratings</p>
+<h1>Users</h1>
+<p>Everyone approved who hasn't opted out of the experiment, and every rating between them. Scores are on the 0 to 1 scale they're stored on, the same as the simulated agents' ratings: a rating of 1 to 10 is saved as (rating − 1) / 9. People are shown as codes (W for women, M for men, N for nonbinary people, in the order they joined), never names. Opening this page is recorded in the audit log.</p>
+
+{% set sm = data.summary %}
+<dl class="facts">
+  <dt>Participants</dt><dd>{{ sm.people }}{% if sm.by_gender %}: {% for g, n in sm.by_gender.items() %}{{ n }} {{ g|lower }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}</dd>
+  <dt>Ratings</dt><dd>{{ sm.ratings }} of {{ sm.possible }} possible{% if sm.coverage is not none %} ({{ (sm.coverage * 100)|round(1) }}%){% endif %}</dd>
+  <dt>Mean score</dt><dd>{% if sm.mean_score is none %}n/a{% else %}{{ sm.mean_score|round(3) }}{% endif %}</dd>
+  <dt>Pairs who rated each other</dt><dd>{{ sm.pairs_both_rated }}</dd>
+  <dt>Pairs who both liked each other</dt><dd>{{ sm.pairs_both_positive }} (both scores {{ threshold|round(3) }} or higher, which is {{ threshold_10 }} on the 1 to 10 scale)</dd>
+</dl>
+
+{% if not data.people %}
+<p class="notice">Nobody's here yet. Approved participants appear once they've joined.</p>
+{% else %}
+
+<div class="numbered">
+<h2>Interest</h2>
+<p>Each row is a rater, and each column is the person they rated. Darker means more interested. Hatched squares haven't been rated yet. People are grouped by gender, then ordered by the mean score they received, so the most liked people in each group come first. Hover over a square for details.</p>
+<div class="heatmap"><canvas data-heatmap="{{ interest_map }}" data-kind="interest" role="img" aria-label="Heat map of every participant's score for every other participant, from 0 to 1, with raters as rows and the people they rated as columns."></canvas></div>
+
+<h2>Reciprocal interest</h2>
+<p>For each pair, the sum of both people's scores for each other, from 0 to 2. It's filled in only where both have rated each other, so the grid is symmetric. Dark squares are pairs who both liked each other.</p>
+<div class="heatmap"><canvas data-heatmap="{{ reciprocal_map }}" data-kind="reciprocal" role="img" aria-label="Symmetric heat map of the sum of each pair's scores for each other, from 0 to 2, where both have rated."></canvas></div>
+
+<h2>Scores given and received, by gender</h2>
+<p>How each group's scores are spread across the 0 to 1 range, as shares of that group's ratings, so groups of different sizes can be compared.</p>
+<div class="two-up">
+  <figure>
+    <figcaption class="kicker">Scores given</figcaption>
+    <div class="chart-box"><canvas data-chart="{{ given_chart }}" role="img" aria-label="Line chart of the share of scores given by each gender in each tenth of the 0 to 1 range. The table below has the means."></canvas></div>
+  </figure>
+  <figure>
+    <figcaption class="kicker">Scores received</figcaption>
+    <div class="chart-box"><canvas data-chart="{{ received_chart }}" role="img" aria-label="Line chart of the share of scores received by each gender in each tenth of the 0 to 1 range. The table below has the means."></canvas></div>
+  </figure>
+</div>
+<div class="table-scroll">
+<table>
+  <thead><tr><th scope="col">Group</th><th scope="col">Ratings given</th><th scope="col">Mean given</th><th scope="col">Median given</th><th scope="col">Ratings received</th><th scope="col">Mean received</th><th scope="col">Median received</th></tr></thead>
+  <tbody>
+  {% set received = {} %}{% for row in data.gender_received.stats %}{% set _ = received.update({row.group: row}) %}{% endfor %}
+  {% for row in data.gender_given.stats %}{% set rec = received.get(row.group) %}
+  <tr><th scope="row">{{ row.group }}</th><td>{{ row.n }}</td><td>{{ row.mean }}</td><td>{{ row.median }}</td>
+    <td>{{ rec.n if rec else 0 }}</td><td>{{ rec.mean if rec else "n/a" }}</td><td>{{ rec.median if rec else "n/a" }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+
+<h2>How often each group liked each group</h2>
+<p>The share of ratings at {{ threshold|round(3) }} or higher ({{ threshold_10 }} on the 1 to 10 scale), from each group of raters (rows) to each group of people rated (columns), with the mean score and the number of ratings.</p>
+<div class="table-scroll">
+<table>
+  <thead><tr><th scope="col">Rater ↓ · Rated →</th>{% for cell in data.liking[0].cells %}<th scope="col">{{ cell.target }}</th>{% endfor %}</tr></thead>
+  <tbody>
+  {% for row in data.liking %}
+  <tr><th scope="row">{{ row.rater }}</th>{% for cell in row.cells %}<td>{% if cell.n %}<strong>{{ (cell.share_positive * 100)|round(1) }}%</strong> liked<small>mean {{ cell.mean }} · n = {{ cell.n }}</small>{% else %}n/a{% endif %}</td>{% endfor %}</tr>
+  {% else %}
+  <tr><td>No ratings yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+
+<h2>What goes with interest</h2>
+<p>Mean score for each value of a profile field, or of how two people compare. Charts with a line per rater gender show whether women and men respond differently. <strong>r</strong> is the Pearson correlation with the score, from −1 to 1. <strong>η²</strong> is the share of the variation in scores explained by the category, from 0 to 1. These are descriptive: one person's ratings are related to each other, so they aren't significance tests.</p>
+<div class="effects">
+{% for item in effects %}{% set e = item.effect %}
+  <figure class="effect">
+    <figcaption><h3>{{ e.title }}{% if e.statistic %} <span class="stat">{{ e.statistic }}</span>{% endif %}</h3><small>{{ e.question }}.{% if e.note %} {{ e.note }}{% endif %}</small></figcaption>
+    {% if e.labels|length > 1 %}
+    <div class="chart-box{% if item.tall %} tall{% endif %}"><canvas data-chart="{{ item.chart }}" role="img" aria-label="Chart of mean score for each {{ e.title|lower }} value. The counts are listed below it."></canvas></div>
+    <p class="counts">n ratings: {% for label in e.labels %}{{ label }} {{ e.counts[loop.index0] }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+    {% elif e.labels %}
+    <p>Everyone rated so far has the same {{ e.title|lower }} ({{ e.labels[0] }}), so there's nothing to compare yet.</p>
+    {% else %}
+    <p>Not enough ratings yet.</p>
+    {% endif %}
+  </figure>
+{% endfor %}
+</div>
+
+<h2 id="methods">How these numbers are calculated</h2>
+<div class="methods">
+  <p>Everything uses each rating once, from approved participants who haven't opted out. Write <var>s</var><sub>ij</sub> for person <var>i</var>'s score for person <var>j</var>.</p>
+
+  <h3>Scores</h3>
+  <p class="math"><var>s</var> = (rating − 1) / 9</p>
+  <p>People rate from 1 to 10, and the score is stored from 0 to 1, the scale the simulated agents' ratings use. A score counts as <strong>liked</strong> when <var>s</var> ≥ <var>t</var>, where <var>t</var> = (POSITIVE_THRESHOLD − 1) / 9 = {{ threshold|round(3) }}.</p>
+
+  <h3>Heat maps</h3>
+  <p class="math">interest cell (<var>i</var>, <var>j</var>) = <var>s</var><sub>ij</sub><br>reciprocal cell (<var>i</var>, <var>j</var>) = <var>s</var><sub>ij</sub> + <var>s</var><sub>ji</sub>, only when both exist, so 0 ≤ cell ≤ 2</p>
+  <p>Shade is proportional to the value, from paper (0) to ink (1, or 2 for reciprocal). Within each gender, people are ordered by the mean score they received, <var>s̄</var><sub>j</sub> = (1 / <var>n</var><sub>j</sub>) Σ<sub>i</sub> <var>s</var><sub>ij</sub>. A pair "both liked each other" when <var>s</var><sub>ij</sub> ≥ <var>t</var> and <var>s</var><sub>ji</sub> ≥ <var>t</var>.</p>
+
+  <h3>Distributions and the liking table</h3>
+  <p class="math">share in bin <var>b</var> = (number of the group's scores with <var>b</var>/10 ≤ <var>s</var> &lt; (<var>b</var>+1)/10) / (number of the group's scores)<br>share liked = (number of ratings with <var>s</var> ≥ <var>t</var>) / (number of ratings), for each rater group and rated group</p>
+  <p>A score of exactly 1.0 goes in the last bin. "Given" groups ratings by the rater's gender, and "received" by the rated person's gender.</p>
+
+  <h3>Mean score per category</h3>
+  <p class="math"><var>ȳ</var><sub>g</sub> = (1 / <var>n</var><sub>g</sub>) Σ <var>s</var>, over the <var>n</var><sub>g</sub> ratings in category <var>g</var></p>
+  <p>Numbers like height are grouped into bins only for the charts. The statistics below use the raw numbers.</p>
+
+  <h3>Pearson correlation, r</h3>
+  <p class="math"><var>r</var> = Σ<sub>k</sub> (<var>x</var><sub>k</sub> − <var>x̄</var>)(<var>y</var><sub>k</sub> − <var>ȳ</var>) / √[ Σ<sub>k</sub> (<var>x</var><sub>k</sub> − <var>x̄</var>)² · Σ<sub>k</sub> (<var>y</var><sub>k</sub> − <var>ȳ</var>)² ]</p>
+  <p>Each rating <var>k</var> is one point: <var>y</var><sub>k</sub> is its score, and <var>x</var><sub>k</sub> is the rated person's height in cm or age in years, the height difference (rated − rater, in cm), or the age gap |rated − rater| in years. <var>r</var> runs from −1 to 1, and 0 means no straight-line relationship. It's left out with fewer than 3 ratings, or when <var>x</var> or <var>y</var> doesn't vary.</p>
+
+  <h3>Regression slope</h3>
+  <p class="math"><var>ŷ</var> = <var>a</var> + <var>b</var><var>x</var>, &nbsp; <var>b</var> = Σ<sub>k</sub> (<var>x</var><sub>k</sub> − <var>x̄</var>)(<var>y</var><sub>k</sub> − <var>ȳ</var>) / Σ<sub>k</sub> (<var>x</var><sub>k</sub> − <var>x̄</var>)², &nbsp; <var>a</var> = <var>ȳ</var> − <var>b</var><var>x̄</var></p>
+  <p>This is ordinary least squares with one predictor, over the same points as <var>r</var>. The slope <var>b</var> is the change in mean score per cm or per year, so "slope +0.0040 per cm" means 10 cm taller goes with a score 0.04 higher. Its R², the share of variance the line explains, equals <var>r</var>². Equivalently, <var>b</var> = <var>r</var> · (SD of <var>y</var> / SD of <var>x</var>).</p>
+
+  <h3>Correlation ratio, η²</h3>
+  <p class="math">η² = Σ<sub>g</sub> <var>n</var><sub>g</sub> (<var>ȳ</var><sub>g</sub> − <var>ȳ</var>)² / Σ<sub>k</sub> (<var>y</var><sub>k</sub> − <var>ȳ</var>)²</p>
+  <p>For categories like major or job: the share of the variation in scores explained by which category the rated person is in, from 0 (every category has the same mean) to 1. It equals the R² of a least-squares regression of the score on one indicator variable per category, which is a one-way ANOVA. It uses every category, before rare ones are pooled into "other" for the chart. Interests aren't given η², because people list several and the groups overlap, so each is compared with the overall mean instead.</p>
+
+  <h3>What these numbers don't tell you</h3>
+  <p>Each person gives many ratings, and generous raters raise every score they give, so ratings aren't independent. That's why there are no p-values or confidence intervals here: treating every rating as independent would make them look far more certain than they are. Use these numbers to explore, and the export, with its stable pseudonyms, for proper models, such as mixed models with rater and rated person as random effects.</p>
+</div>
+</div>
+{% endif %}
+{% endblock %}

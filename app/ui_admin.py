@@ -1,6 +1,7 @@
 """Admin pages. Each one needs an admin who signed in recently (step-up), and every view of
-sensitive data and every action is written to audit_log. There's deliberately no page for
-browsing individual ratings or anyone's rating history.
+sensitive data and every action is written to audit_log. Ratings are shown only on the
+Users page, with people as codes rather than names, and only for people who haven't
+opted out.
 """
 
 import json
@@ -10,7 +11,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 
-from app import actions, analytics
+from app import actions, analytics, insights
 from app.actions import ActionError
 from app.deps import services
 from app.services import Services
@@ -96,15 +97,15 @@ def compare(request: Request, k: int = 10, admin: Account = Depends(page_admin),
     position_chart = {
         "type": "line",
         "data": {"datasets": [
-            {"label": arm.matcher, "data": [{"x": p, "y": round(m, 2)} for p, m, _ in arm.positions]} for arm in arms
+            {"label": arm.matcher, "data": [{"x": p, "y": round(m, 3)} for p, m, _ in arm.positions]} for arm in arms
         ]},
         "options": {"scales": {"x": {"type": "linear", "title": {"display": True, "text": "Impression position"}},
-                               "y": {"min": 1, "max": 10, "title": {"display": True, "text": "Mean rating"}}}},
+                               "y": {"min": 0, "max": 1, "title": {"display": True, "text": "Mean score (0 to 1)"}}}},
     }
     histogram_chart = {
         "type": "bar",
-        "data": {"labels": [str(b) for b in range(1, 11)], "datasets": [{"label": arm.matcher, "data": arm.histogram} for arm in arms]},
-        "options": {"scales": {"x": {"title": {"display": True, "text": "Rating (rounded down)"}},
+        "data": {"labels": [f"{b / 10:.1f}–{(b + 1) / 10:.1f}" for b in range(10)], "datasets": [{"label": arm.matcher, "data": arm.histogram} for arm in arms]},
+        "options": {"scales": {"x": {"title": {"display": True, "text": "Score (0 to 1)"}},
                                "y": {"title": {"display": True, "text": "Ratings"}}}},
     }
     return _page(request, "compare.html", {
@@ -113,6 +114,54 @@ def compare(request: Request, k: int = 10, admin: Account = Depends(page_admin),
         "settings": s.settings,
         "position_chart": json.dumps(position_chart),
         "histogram_chart": json.dumps(histogram_chart),
+    })
+
+
+def _bar_chart(effect: insights.Effect, horizontal: bool) -> dict:
+    datasets = [{"label": name, "data": values} for name, values in effect.series.items()]
+    value_axis = {"min": 0, "max": 1, "title": {"display": True, "text": "Mean score (0 to 1)"}}
+    category_axis = {"title": {"display": False}}
+    chart_type = "line" if len(datasets) > 1 else "bar"
+    return {
+        "type": chart_type,
+        "data": {"labels": effect.labels, "datasets": datasets},
+        "options": {
+            "indexAxis": "y" if horizontal and chart_type == "bar" else "x",
+            "plugins": {"legend": {"display": len(datasets) > 1}},
+            "scales": {"x": value_axis, "y": category_axis} if horizontal and chart_type == "bar" else {"x": category_axis, "y": value_axis},
+        },
+    }
+
+
+def _distribution_chart(data: dict, axis_title: str) -> dict:
+    return {
+        "type": "line",
+        "data": {"labels": data["labels"], "datasets": [{"label": name, "data": values} for name, values in data["series"].items()]},
+        "options": {"scales": {"x": {"title": {"display": True, "text": "Score (0 to 1)"}},
+                               "y": {"min": 0, "title": {"display": True, "text": axis_title}}}},
+    }
+
+
+@router.get("/users")
+def users(request: Request, admin: Account = Depends(page_admin), s: Services = Depends(services)) -> Response:
+    """Every participant's scores for every other, as heat maps, with descriptive charts.
+    People appear as codes, never names, and each view is audited."""
+    threshold = analytics.to_unit(s.settings.positive_threshold)
+    data = insights.load(s.settings.main_db, threshold)
+    s.live.audit(admin.account_id, "view_user_insights", None, {"people": len(data.people), "ratings": len(data.ratings)})
+    effects = [
+        {"effect": e, "chart": json.dumps(_bar_chart(e, horizontal=len(e.series) == 1 and len(e.labels) > 5)), "tall": len(e.labels) > 8}
+        for e in data.effects
+    ]
+    return _page(request, "users.html", {
+        "data": data,
+        "threshold": threshold,
+        "threshold_10": s.settings.positive_threshold,
+        "interest_map": json.dumps(data.interest_map),
+        "reciprocal_map": json.dumps(data.reciprocal_map),
+        "given_chart": json.dumps(_distribution_chart(data.gender_given, "Share of ratings given")),
+        "received_chart": json.dumps(_distribution_chart(data.gender_received, "Share of ratings received")),
+        "effects": effects,
     })
 
 

@@ -353,7 +353,7 @@ def admin_page(env: Env) -> TestClient:
 
 def test_non_admins_get_403_on_admin_pages(env: Env) -> None:
     browser, _ = member(env, "v@bu.edu")
-    for path in ("/admin", "/admin/approvals", "/admin/compare", "/admin/export.csv", "/admin/audit"):
+    for path in ("/admin", "/admin/approvals", "/admin/compare", "/admin/users", "/admin/export.csv", "/admin/audit"):
         assert browser.get(path).status_code == 403
 
 
@@ -419,6 +419,9 @@ def test_export_is_pseudonymized_stable_and_audited(env: Env) -> None:
     again = list(csv.DictReader(io.StringIO(admin.get("/admin/export.csv").text)))
     assert sorted(r["viewer"] for r in rows) == sorted(r["viewer"] for r in again)
     assert [e["details"] for e in env.s.live.audit_entries(action="export")][0] == '{"rows": 2}'
+    # Scores are exported on the 0 to 1 scale they're stored on: a 9 is (9 - 1) / 9.
+    assert {r["score"] for r in rows} == {"0.8889"}
+    assert "rating" not in rows[0]
 
 
 # Pages in general
@@ -474,3 +477,38 @@ def test_admin_sets_when_rating_opens_and_discover_waits_for_it(env: Env) -> Non
     assert admin.post("/admin/controls", data={**form, "rating_opens_at": "not a date"}).status_code == 422
     assert admin.post("/admin/controls", data={**form, "rating_opens_at": ""}).status_code == 303
     assert 'name="score"' in browser.get("/discover").text
+
+
+def test_users_page_shows_codes_not_names_leaves_out_opted_out_and_is_audited(env: Env) -> None:
+    a, a_id, b, b_id, match_id = matched(env)
+    c, c_id = member(env, "c@bu.edu", "woman", ("man",), name="Cora Quinn")
+    env.s.live.set_flags(env.s.live.account_for_user(c_id).account_id, experiment_opt_out=True)
+    admin = admin_page(env)
+    response = admin.get("/admin/users")
+    assert response.status_code == 200
+    html = unescape(response.text)
+    for secret in ("Alex", "Bea", "Cora", "Smith", "Jones", "@bu.edu", a_id, b_id, c_id):
+        assert secret not in html, secret
+    interest = json.loads(re.search(r'data-heatmap="([^"]+)" data-kind="interest"', response.text).group(1).replace("&#34;", '"').replace("&quot;", '"'))
+    assert sorted(interest["labels"]) == ["M01", "W01"]  # Cora opted out, so she isn't here.
+    assert {v for row in interest["values"] for v in row} == {None, 0.889}
+    reciprocal = json.loads(unescape(re.search(r'data-heatmap="([^"]+)" data-kind="reciprocal"', response.text).group(1)))
+    assert {v for row in reciprocal["values"] for v in row} == {None, 1.778}
+    assert "Pairs who both liked each other</dt><dd>1 " in response.text
+    assert "How these numbers are calculated" in html and "Pearson correlation" in html and "η²" in html
+    entries = env.s.live.audit_entries(action="view_user_insights")
+    assert entries and entries[-1]["details"] == '{"people": 2, "ratings": 2}'
+
+
+def test_admins_go_straight_to_admin_after_consent(env: Env) -> None:
+    api = env.login(ADMIN_EMAIL)
+    browser = page(env, api)
+    html = browser.get("/onboarding/consent").text
+    response = browser.post("/onboarding/consent", data={"csrf_token": csrf_of(html), "version": "2", "agree": "yes"})
+    assert response.headers["location"] == "/admin"
+    assert browser.get("/admin/users").status_code == 200
+
+
+def test_users_page_with_nobody_yet(env: Env) -> None:
+    html = admin_page(env).get("/admin/users").text
+    assert "Nobody's here yet" in html

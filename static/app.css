@@ -122,6 +122,7 @@ nav.primary a[aria-current="page"] { color: var(--ink); background: url("/static
   nav.primary ul { gap: .25rem; }
 }
 
+.site-footer.wide { max-width: 70rem; }
 .site-footer { max-width: 40rem; margin: 0 auto; padding: 0 var(--gutter) 2.5rem; font: 500 .7rem/1.6 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-soft); }
 
 /* Drawn boxes. The border is a layer of its own, run through the pencil filter so the
@@ -411,3 +412,22 @@ nav.sub a:hover, nav.sub a[aria-current="page"] { color: var(--ink); text-decora
   body { background: #fff; }
   nav.primary, .skip-link { display: none; }
 }
+
+/* Admin Users page */
+.heatmap { position: relative; overflow-x: auto; margin: 1rem 0 2rem; }
+.heatmap canvas { display: block; cursor: crosshair; }
+.heat-tip { position: absolute; z-index: 5; pointer-events: none; padding: .35rem .55rem; background: var(--ink); color: var(--paper); font: 500 .75rem/1.3 var(--mono); white-space: nowrap; }
+.two-up { display: grid; gap: 1rem 2rem; }
+@media (min-width: 56rem) { .two-up { grid-template-columns: 1fr 1fr; } }
+.two-up figure, figure.effect { margin: 0; }
+.effects { display: grid; gap: 1.5rem 2.5rem; }
+@media (min-width: 56rem) { .effects { grid-template-columns: 1fr 1fr; } }
+figure.effect { padding-top: 1rem; border-top: 1.5px solid var(--ink); }
+figure.effect h3 { margin: 0 0 .2rem; font: 700 1.6rem/1.1 var(--hand); text-transform: none; letter-spacing: 0; }
+figure.effect .stat { font: 600 .72rem/1 var(--mono); letter-spacing: .06em; color: var(--ink-soft); margin-left: .4rem; vertical-align: .3em; }
+.chart-box.tall { height: 24rem; }
+.counts { font: 500 .66rem/1.5 var(--mono); color: var(--ink-soft); margin-top: -1rem; }
+.methods { max-width: 46rem; }
+.methods h3 { margin-top: 1.75rem; }
+.math { padding: .75rem 1rem; background: var(--paper-deep); border-left: 2px solid var(--ink); font: 400 .95rem/1.9 var(--sans); overflow-x: auto; }
+.math var, .methods var { font-family: Georgia, "Times New Roman", serif; font-style: italic; }

@@ -12,7 +12,8 @@
 </form>
 <h2>Definitions</h2>
 <ul>
-  <li>A rating is <strong>positive</strong> at {{ settings.positive_threshold }} or above, on the 1 to 10 scale.</li>
+  <li>Scores are on the 0 to 1 scale they're stored on, like the simulated agents' ratings: (rating − 1) / 9.</li>
+  <li>A score is <strong>positive</strong> at {{ ((settings.positive_threshold - 1) / 9)|round(3) }} or above, which is {{ settings.positive_threshold }} on the 1 to 10 scale people use.</li>
   <li>A prediction is <strong>positive</strong> at {{ settings.prediction_threshold }} or above. Matchers predict on a 0 to 1 scale.</li>
   <li>Only rated impressions count, and opted-out users are left out.</li>
   <li>Intervals are 95% bootstrap intervals that resample users, not ratings. Each number shows n users and n ratings.</li>
@@ -39,14 +40,14 @@
 </table>
 
 <h2>Rating by position</h2>
-<p>Mean rating at each impression position. Everyone eventually sees everyone, so algorithms mostly differ in early positions.</p>
-<div class="chart-box"><canvas data-chart="{{ position_chart }}" role="img" aria-label="Line chart of mean rating by impression position for each algorithm. The table above has the summary numbers."></canvas></div>
+<p>Mean score at each impression position. Everyone eventually sees everyone, so algorithms mostly differ in early positions.</p>
+<div class="chart-box"><canvas data-chart="{{ position_chart }}" role="img" aria-label="Line chart of mean score by impression position for each algorithm. The table above has the summary numbers."></canvas></div>
 
-<h2>Distribution of ratings</h2>
-<div class="chart-box"><canvas data-chart="{{ histogram_chart }}" role="img" aria-label="Bar chart of how many ratings fell in each whole number from 1 to 10, per algorithm."></canvas></div>
+<h2>Distribution of scores</h2>
+<div class="chart-box"><canvas data-chart="{{ histogram_chart }}" role="img" aria-label="Bar chart of how many scores fell in each tenth of the 0 to 1 range, per algorithm."></canvas></div>
 <table>
-  <thead><tr><th scope="col">Rating</th>{% for arm in arms %}<th scope="col">{{ arm.matcher }}</th>{% endfor %}</tr></thead>
-  <tbody>{% for b in range(10) %}<tr><th scope="row">{{ b + 1 }}</th>{% for arm in arms %}<td>{{ arm.histogram[b] }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+  <thead><tr><th scope="col">Score</th>{% for arm in arms %}<th scope="col">{{ arm.matcher }}</th>{% endfor %}</tr></thead>
+  <tbody>{% for b in range(10) %}<tr><th scope="row">{{ "%.1f"|format(b / 10) }}–{{ "%.1f"|format((b + 1) / 10) }}</th>{% for arm in arms %}<td>{{ arm.histogram[b] }}</td>{% endfor %}</tr>{% endfor %}</tbody>
 </table>
 
 <h2>Predictions</h2>
@@ -75,7 +76,7 @@
 {% for title, entries in arm.groups.items() %}
 <table>
   <caption>{{ title }} of the rater</caption>
-  <thead><tr><th scope="col">Group</th><th scope="col">Mean rating</th><th scope="col">Share positive</th></tr></thead>
+  <thead><tr><th scope="col">Group</th><th scope="col">Mean score</th><th scope="col">Share positive</th></tr></thead>
   <tbody>
   {% for g in entries %}
   <tr><th scope="row">{{ g.group }}</th>

@@ -1,8 +1,9 @@
 """Pure metric functions for comparing matchers. No web or database imports.
 
-Ratings are on the 1 to 10 scale people use in the app. A rating counts as positive at
-POSITIVE_THRESHOLD or above, and a prediction counts as positive at PREDICTION_THRESHOLD
-or above. Matchers should give predictions on a 0 to 1 scale, as probabilities of a
+The functions don't depend on the rating scale. The live app passes scores on the 0 to 1
+scale they're stored on, with thresholds converted to match. A rating counts as positive
+at a threshold or above, and a prediction counts as positive at PREDICTION_THRESHOLD or
+above. Matchers should give predictions on a 0 to 1 scale, as probabilities of a
 positive rating.
 
 Functions that can't be computed, for example precision with no predicted positives,
@@ -186,3 +187,66 @@ def learning_curve(scores: list[float], n_windows: int = DEFAULT_WINDOWS) -> lis
         return []
     bounds = [len(scores) * i // n_windows for i in range(n_windows + 1)]
     return [statistics.fmean(scores[a:b]) for a, b in zip(bounds, bounds[1:])]
+
+
+def pearson(xs: Sequence[float], ys: Sequence[float]) -> float | None:
+    """The Pearson correlation of two equal-length sequences, or None if either is constant
+    or there are fewer than 3 pairs."""
+    if len(xs) != len(ys):
+        raise ValueError("xs and ys must be the same length")
+    if len(xs) < 3:
+        return None
+    mx, my = statistics.fmean(xs), statistics.fmean(ys)
+    sxy = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+    sxx = sum((x - mx) ** 2 for x in xs)
+    syy = sum((y - my) ** 2 for y in ys)
+    if sxx == 0 or syy == 0:
+        return None
+    return sxy / (sxx * syy) ** 0.5
+
+
+def linear_fit(xs: Sequence[float], ys: Sequence[float]) -> tuple[float, float] | None:
+    """The least-squares line y = intercept + slope * x, as (slope, intercept).
+
+    slope = sum((x - mean x)(y - mean y)) / sum((x - mean x)^2). None if x doesn't vary or
+    there are fewer than 3 pairs. Its R^2 equals pearson(xs, ys) squared.
+    """
+    if len(xs) != len(ys):
+        raise ValueError("xs and ys must be the same length")
+    if len(xs) < 3:
+        return None
+    mx, my = statistics.fmean(xs), statistics.fmean(ys)
+    sxx = sum((x - mx) ** 2 for x in xs)
+    if sxx == 0:
+        return None
+    slope = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sxx
+    return slope, my - slope * mx
+
+
+def correlation_ratio(groups: dict[str, Sequence[float]]) -> float | None:
+    """Eta squared: the share of the variance in values explained by which group they're in.
+
+    0 means the groups have identical means, and 1 means every value equals its group's mean.
+    It's the categorical counterpart of a squared correlation. None if there's no variance,
+    or fewer than two non-empty groups.
+    """
+    filled = [list(values) for values in groups.values() if values]
+    if len(filled) < 2:
+        return None
+    every = [v for values in filled for v in values]
+    grand = statistics.fmean(every)
+    total = sum((v - grand) ** 2 for v in every)
+    if total == 0:
+        return None
+    between = sum(len(values) * (statistics.fmean(values) - grand) ** 2 for values in filled)
+    return between / total
+
+
+def histogram(values: Sequence[float], bins: int = 10, low: float = 0.0, high: float = 1.0) -> list[int]:
+    """Counts in equal-width bins from low to high. The top edge belongs to the last bin."""
+    counts = [0] * bins
+    width = (high - low) / bins
+    for value in values:
+        if low <= value <= high:
+            counts[min(int((value - low) / width), bins - 1)] += 1
+    return counts

@@ -129,3 +129,36 @@ def test_complementary_suppression_hides_the_next_smallest() -> None:
     # Only "c" is small, so "b", the next smallest, is hidden too, or c = total - a - b.
     assert suppressed_groups({"a": 50, "b": 20, "c": 4}, 10) == {"b", "c"}
     assert suppressed_groups({"only": 3}, 10) == {"only"}
+
+
+def test_pearson() -> None:
+    assert metrics.pearson([1, 2, 3, 4], [2, 4, 6, 8]) == pytest.approx(1.0)
+    assert metrics.pearson([1, 2, 3, 4], [8, 6, 4, 2]) == pytest.approx(-1.0)
+    assert metrics.pearson([1, 1, 1], [1, 2, 3]) is None  # No variance.
+    assert metrics.pearson([1, 2], [1, 2]) is None  # Too few pairs.
+    with pytest.raises(ValueError):
+        metrics.pearson([1, 2, 3], [1, 2])
+
+
+def test_linear_fit_matches_pearson() -> None:
+    assert metrics.linear_fit([0, 1, 2], [1, 3, 5]) == pytest.approx((2.0, 1.0))
+    xs, ys = [1, 2, 3, 4, 5], [2, 1, 4, 3, 5]
+    slope, intercept = metrics.linear_fit(xs, ys)
+    predicted = [intercept + slope * x for x in xs]
+    mean = sum(ys) / len(ys)
+    r_squared = 1 - sum((y - p) ** 2 for y, p in zip(ys, predicted)) / sum((y - mean) ** 2 for y in ys)
+    assert r_squared == pytest.approx(metrics.pearson(xs, ys) ** 2)
+    assert metrics.linear_fit([1, 1, 1], [1, 2, 3]) is None
+
+
+def test_correlation_ratio() -> None:
+    assert metrics.correlation_ratio({"a": [0, 0], "b": [1, 1]}) == pytest.approx(1.0)
+    assert metrics.correlation_ratio({"a": [0, 1], "b": [0, 1]}) == pytest.approx(0.0)
+    assert metrics.correlation_ratio({"a": [0, 2], "b": [4, 6]}) == pytest.approx(16 / 20)
+    assert metrics.correlation_ratio({"a": [1, 2]}) is None
+    assert metrics.correlation_ratio({"a": [1], "b": [1]}) is None
+
+
+def test_histogram_bins_0_to_1_with_the_top_edge_in_the_last_bin() -> None:
+    assert metrics.histogram([0, 0.05, 0.1, 0.95, 1.0]) == [2, 1, 0, 0, 0, 0, 0, 0, 0, 2]
+    assert metrics.histogram([-0.1, 1.1]) == [0] * 10

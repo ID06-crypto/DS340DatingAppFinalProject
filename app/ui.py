@@ -170,6 +170,8 @@ async def consent_submit(request: Request, account: Account = Depends(page_accou
     if form.get("agree") != "yes":
         return _consent(request, s, "Tick the box to agree before continuing.")
     actions.give_consent(s, account, str(form.get("version", "")))
+    if account.role == "admin" and account.status == "approved":
+        return redirect(request, "/admin")  # Admins don't need a profile to run the study.
     return redirect(request, "/onboarding/profile")
 
 
