@@ -361,6 +361,22 @@ Open http://localhost:8000 in a browser, enter an email (`dev.user01@bu.edu` for
 
 **When rating opens:** admins set a date and time on the controls page, in `STUDY_TIMEZONE`. Before it, people can sign up and be approved, but Discover shows when rating opens, and ratings are refused. Leave it empty to open rating now.
 
+### Ground truth: who likes whom
+
+The point of the live study is a true record of how much each participant likes every other, to compare with what a model predicts. It's kept in three places:
+
+1. **The database.** Every rating is a row in the `ratings` table of `APP_MAIN_DB` (`data/live/main.db` locally), with `run_id = 'live'`, the rater's and target's user ids, the score from 0 to 1, and a timestamp. This is the source of truth, so back it up (see the hosting plan).
+2. **Downloads.** Admin → Users → "Download the ground truth" (`/admin/truth.zip`) gives `participants.csv`, `scores.csv`, `matrix.csv`, and a `README.txt` describing every column. Each download is audited.
+3. **Snapshots on disk.** `python scripts/export_truth.py` writes the same files to `data/live/exports/truth-<UTC time>/`, or to a folder you name. It needs the same `EXPORT_SALT` as the server, and never overwrites a folder.
+
+**Anonymized ids.** Files never contain names or emails. Each person is a `participant_id`: the first 16 hex characters of SHA-256 of `EXPORT_SALT:user_id`. It's stable as long as `EXPORT_SALT` doesn't change, so snapshots from different days line up, and it's the same id as `viewer` and `target` in the impressions export. Keep `EXPORT_SALT` secret and never change it during the study: with it and the database, ids can be traced to accounts, and without it, new files won't match old ones.
+
+**What's in the matrix.** Approved real participants who haven't opted out, and only ratings between two of them. Agents are never included. `matrix.csv` has one row per rater and one column per person rated, both sorted by `participant_id`, with blank cells where nobody has rated yet and a blank diagonal. Scores are raw, on the 0 to 1 scale of the agents' ratings (`(rating - 1) / 9`), and aren't normalized per rater.
+
+**Comparing a model.** Predict a score from 0 to 1 for each `(rater_id, target_id)` in `scores.csv` and compare, for example with mean absolute error, rank correlation within each rater, or precision at k. A pair is "liked" at `(POSITIVE_THRESHOLD - 1) / 9` or higher, and "mutual" when both directions are. Matchers that score candidates in the app also save every prediction they made, in the `impression_candidates` table.
+
+**Deleted accounts.** Deleting an account removes its ratings from the database and from later downloads, as the consent form promises. Snapshots saved earlier still hold that person's pseudonymous ratings, so delete or regenerate old snapshots if someone asks for their data to be removed.
+
 **Opting out:** users who opt out always get `DEFAULT_MATCHER`, and their data is left out of all analytics and exports. **Pausing** hides a user from everyone's pool without deleting anything.
 
 ### Analytics

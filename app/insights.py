@@ -6,14 +6,23 @@ included, and only live ratings between two of them.
 
 People appear as codes, never names: W for women, M for men, N for nonbinary people,
 numbered in the order they joined. Codes change when people join or leave, so they're for
-reading the page, not for joining with other data. The export has stable pseudonyms.
+reading the page. For keeping and joining data, each person also has a participant_id: a
+salted hash of their user id (see analytics.pseudonym), stable for as long as EXPORT_SALT
+stays the same, and identical to the ids in the impressions export.
+
+truth_tables() turns the same data into the ground truth for comparing models with: who
+rated whom and how much, by participant_id. See "Ground truth" in the README.
 
 These are descriptive numbers for exploring the data. Ratings from the same person are
 correlated, so correlations here aren't tests of anything.
 """
 
+import csv
+import io
 import json
 import statistics
+import zipfile
+from datetime import datetime, timezone
 from collections import defaultdict
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -21,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 import metrics
+from app.analytics import age_band, pseudonym
 from db import connect
 from models import LIVE_RUN_ID
 
@@ -51,6 +61,7 @@ class Person:
     looking_for: str
     religion: str | None
     interests: list[str]
+    participant_id: str | None = None  # Set when a salt is given.
 
 
 @dataclass
@@ -58,6 +69,7 @@ class Rated:
     rater: Person
     target: Person
     score: float
+    rated_at: str | None = None
 
 
 @dataclass
@@ -97,12 +109,12 @@ _PEOPLE = """
 """
 
 
-def load(db_path: str | Path, positive_threshold: float) -> Insights:
-    """positive_threshold is on the 0 to 1 scale."""
+def load(db_path: str | Path, positive_threshold: float, salt: str = "") -> Insights:
+    """positive_threshold is on the 0 to 1 scale. With a salt, people get participant_ids."""
     with connect(db_path) as conn:
         rows = conn.execute(_PEOPLE).fetchall()
         raw = conn.execute(
-            "SELECT rater_id, target_id, score FROM ratings WHERE run_id = ?", (LIVE_RUN_ID,)
+            "SELECT rater_id, target_id, score, timestamp FROM ratings WHERE run_id = ?", (LIVE_RUN_ID,)
         ).fetchall()
     counters: dict[str, int] = defaultdict(int)
     people = []
@@ -121,10 +133,11 @@ def load(db_path: str | Path, positive_threshold: float) -> Insights:
             looking_for=r["looking_for"],
             religion=r["religion"],
             interests=json.loads(r["interests"]),
+            participant_id=pseudonym(r["user_id"], salt) if salt else None,
         ))
     by_id = {p.user_id: p for p in people}
     ratings = [
-        Rated(by_id[r["rater_id"]], by_id[r["target_id"]], r["score"])
+        Rated(by_id[r["rater_id"]], by_id[r["target_id"]], r["score"], r["timestamp"])
         for r in raw
         if r["rater_id"] in by_id and r["target_id"] in by_id
     ]
@@ -184,7 +197,11 @@ def _maps(people: list[Person], ratings: list[Rated]) -> tuple[dict[str, Any], d
         [_round(scores[(a, b)] + scores[(b, a)]) if (a, b) in scores and (b, a) in scores else None for b in ids]
         for a in ids
     ]
-    axes = {"labels": [p.code for p in ordered], "groups": [GENDER_CODE.get(p.gender, "?") for p in ordered]}
+    axes = {
+        "labels": [p.code for p in ordered],
+        "ids": [p.participant_id for p in ordered],
+        "groups": [GENDER_CODE.get(p.gender, "?") for p in ordered],
+    }
     return ({**axes, "values": interest, "max": 1}, {**axes, "values": reciprocal, "max": 2})
 
 
@@ -347,3 +364,105 @@ def _interest_effect(ratings: list[Rated]) -> Effect:
         [len(groups[i]) for i in kept], f"overall mean = {overall:.3f}",
         f"The {MAX_INTERESTS} most common interests with at least {MIN_CATEGORY_RATINGS} ratings. People list several, so groups overlap.",
     )
+
+
+# Ground truth
+
+TRUTH_FILES = ("participants.csv", "scores.csv", "matrix.csv")
+
+
+def truth_tables(data: Insights) -> dict[str, list[list[Any]]]:
+    """The ground truth, as rows for three CSV files, keyed by participant_id.
+
+    participants.csv: one row per participant, with gender and age band only.
+    scores.csv: one row per rating: rater_id, target_id, score from 0 to 1, and when.
+    matrix.csv: one row per rater and one column per person rated, both in participant_id
+    order. A blank cell means not rated yet, and the diagonal is always blank.
+    """
+    if any(p.participant_id is None for p in data.people):
+        raise ValueError("load() needs a salt to give people participant_ids")
+    people = sorted(data.people, key=lambda p: p.participant_id)
+    given: dict[str, int] = defaultdict(int)
+    received: dict[str, int] = defaultdict(int)
+    scores = {}
+    for r in data.ratings:
+        given[r.rater.user_id] += 1
+        received[r.target.user_id] += 1
+        scores[(r.rater.participant_id, r.target.participant_id)] = r.score
+    participants = [["participant_id", "gender", "age_band", "ratings_given", "ratings_received"]] + [
+        [p.participant_id, p.gender, age_band(p.age), given[p.user_id], received[p.user_id]] for p in people
+    ]
+    ordered = sorted(data.ratings, key=lambda r: (r.rater.participant_id, r.target.participant_id))
+    score_rows = [["rater_id", "target_id", "score", "rated_at"]] + [
+        [r.rater.participant_id, r.target.participant_id, f"{r.score:.6f}", r.rated_at or ""] for r in ordered
+    ]
+    ids = [p.participant_id for p in people]
+    matrix = [["rater_id"] + ids] + [
+        [a] + ["" if (a, b) not in scores else f"{scores[(a, b)]:.6f}" for b in ids] for a in ids
+    ]
+    return {"participants.csv": participants, "scores.csv": score_rows, "matrix.csv": matrix}
+
+
+def to_csv(rows: list[list[Any]]) -> str:
+    output = io.StringIO()
+    csv.writer(output, lineterminator="\n").writerows(rows)
+    return output.getvalue()
+
+
+TRUTH_README = """Ground truth from the live study: who rated whom, and how much.
+
+Saved {saved_at} UTC. {people} participants, {ratings} ratings.
+
+Who's included: approved real participants who haven't opted out of the experiment, and only
+ratings between two of them. Simulated agents are never included. Someone who deletes their
+account is removed, with all their ratings, as the consent form promises.
+
+participant_id: a salted SHA-256 hash of the person's internal user id, first 16 hex
+characters. It's stable for as long as EXPORT_SALT stays the same, so files saved on
+different days, and the impressions export, use the same ids. Keep EXPORT_SALT secret:
+with it and database access, ids can be traced back to accounts.
+
+score: from 0 to 1, the scale the simulated agents' ratings use. People rate from 1 to 10,
+and score = (rating - 1) / 9. Scores aren't normalized per rater.
+
+participants.csv  participant_id, gender, age_band, ratings_given, ratings_received
+scores.csv        rater_id, target_id, score, rated_at (UTC, ISO 8601). One row per rating.
+matrix.csv        Rows are raters and columns are the people they rated, both by
+                  participant_id. A blank cell means not rated yet. The diagonal is blank.
+
+To compare a model with these: predict a score from 0 to 1 for each (rater_id, target_id)
+in scores.csv, and compare, for example with mean absolute error, rank correlation per
+rater, or precision at k. A pair is "liked" at a score of {threshold:.4f} or higher
+(7.0 on the 1 to 10 scale), and "mutual" when both directions are.
+"""
+
+
+def truth_files(data: Insights) -> dict[str, str]:
+    """Every ground-truth file, by name, as text: the three CSVs and a README."""
+    files = {name: to_csv(rows) for name, rows in truth_tables(data).items()}
+    files["README.txt"] = TRUTH_README.format(
+        saved_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
+        people=len(data.people),
+        ratings=len(data.ratings),
+        threshold=data.positive_threshold,
+    )
+    return files
+
+
+def truth_zip(data: Insights) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name, text in truth_files(data).items():
+            archive.writestr(f"ground-truth/{name}", text)
+    return buffer.getvalue()
+
+
+def write_truth(folder: Path, data: Insights) -> list[Path]:
+    """Save the ground-truth files into a new folder, which must not exist yet."""
+    folder.mkdir(parents=True, exist_ok=False)
+    paths = []
+    for name, text in truth_files(data).items():
+        path = folder / name
+        path.write_text(text)
+        paths.append(path)
+    return paths

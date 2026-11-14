@@ -431,3 +431,6 @@ figure.effect .stat { font: 600 .72rem/1 var(--mono); letter-spacing: .06em; col
 .methods h3 { margin-top: 1.75rem; }
 .math { padding: .75rem 1rem; background: var(--paper-deep); border-left: 2px solid var(--ink); font: 400 .95rem/1.9 var(--sans); overflow-x: auto; }
 .math var, .methods var { font-family: Georgia, "Times New Roman", serif; font-style: italic; }
+code { font: 500 .88em var(--mono); background: var(--paper-deep); padding: .05em .3em; }
+a.button { color: var(--paper); text-decoration: none; }
+a.button:hover { top: -1px; left: -1px; }

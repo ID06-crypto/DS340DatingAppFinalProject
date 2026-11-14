@@ -64,3 +64,29 @@ def test_effects_report_height_correlation_and_pool_rare_categories(people: list
     major = effects["Major"]
     assert major.labels == ["other"]  # Fewer than 5 ratings in every category.
     assert insights.compute(people, [], 0.6).effects == []
+
+
+def test_truth_tables_are_keyed_by_participant_id_with_a_blank_diagonal(people: list[Person]) -> None:
+    for p in people:
+        p.participant_id = "id-" + p.code
+    w1, w2, m1, n1 = people
+    data = insights.compute(people, [Rated(w1, m1, 0.75, "2026-11-20T10:00:00+00:00"), Rated(m1, w1, 0.5)], 0.6)
+    tables = insights.truth_tables(data)
+    ids = sorted(p.participant_id for p in people)
+    matrix = tables["matrix.csv"]
+    assert matrix[0] == ["rater_id"] + ids
+    grid = {row[0]: dict(zip(ids, row[1:])) for row in matrix[1:]}
+    assert grid["id-W01"]["id-M01"] == "0.750000" and grid["id-M01"]["id-W01"] == "0.500000"
+    assert all(grid[i][i] == "" for i in ids)
+    assert grid["id-W02"]["id-M01"] == ""
+    assert tables["scores.csv"][1:] == [["id-M01", "id-W01", "0.500000", ""], ["id-W01", "id-M01", "0.750000", "2026-11-20T10:00:00+00:00"]]
+    participants = {row[0]: row for row in tables["participants.csv"][1:]}
+    assert participants["id-W01"][1:] == ["woman", "21-23", 1, 1]
+    files = insights.truth_files(data)
+    assert set(files) == {"participants.csv", "scores.csv", "matrix.csv", "README.txt"}
+    assert "2 ratings" in files["README.txt"] and "(rating - 1) / 9" in files["README.txt"]
+
+
+def test_truth_tables_need_participant_ids(people: list[Person]) -> None:
+    with pytest.raises(ValueError):
+        insights.truth_tables(insights.compute(people, [], 0.6))

@@ -140,7 +140,9 @@ document.addEventListener("DOMContentLoaded", function () {
     var j = Math.floor((event.clientX - box.left - h.margin) / h.cell);
     var i = Math.floor((event.clientY - box.top - h.margin) / h.cell);
     if (i < 0 || j < 0 || i >= h.n || j >= h.n || i === j) { return null; }
-    var a = h.spec.labels[i], b = h.spec.labels[j], v = h.spec.values[i][j];
+    var ids = h.spec.ids || [];
+    function name(k) { return h.spec.labels[k] + (ids[k] ? " (" + ids[k] + ")" : ""); }
+    var a = name(i), b = name(j), v = h.spec.values[i][j];
     if (canvas.getAttribute("data-kind") === "reciprocal") {
       return v === null ? a + " and " + b + ": not both rated yet" : a + " + " + b + ": " + v.toFixed(2) + " of 2";
     }

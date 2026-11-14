@@ -512,3 +512,47 @@ def test_admins_go_straight_to_admin_after_consent(env: Env) -> None:
 def test_users_page_with_nobody_yet(env: Env) -> None:
     html = admin_page(env).get("/admin/users").text
     assert "Nobody's here yet" in html
+
+
+def test_ground_truth_download_matches_the_export_ids_and_leaves_out_names(env: Env) -> None:
+    import zipfile
+
+    a, a_id, b, b_id, match_id = matched(env)
+    _, c_id = member(env, "c@bu.edu", "woman", ("man",), name="Cora Quinn")
+    env.s.live.set_flags(env.s.live.account_for_user(c_id).account_id, experiment_opt_out=True)
+    admin = admin_page(env)
+    assert 'href="/admin/truth.zip"' in admin.get("/admin/users").text
+    response = admin.get("/admin/truth.zip")
+    assert response.status_code == 200 and response.headers["content-type"] == "application/zip"
+    archive = zipfile.ZipFile(io.BytesIO(response.content))
+    files = {name.split("/")[-1]: archive.read(name).decode() for name in archive.namelist()}
+    assert set(files) == {"participants.csv", "scores.csv", "matrix.csv", "README.txt"}
+    for text in files.values():
+        for secret in ("Alex", "Bea", "Cora", "@bu.edu", a_id, b_id, c_id):
+            assert secret not in text, secret
+    scores = list(csv.DictReader(io.StringIO(files["scores.csv"])))
+    assert {r["score"] for r in scores} == {"0.888889"}  # Both rated 9: (9 - 1) / 9.
+    export_ids = {r["viewer"] for r in csv.DictReader(io.StringIO(admin.get("/admin/export.csv").text))}
+    assert {r["rater_id"] for r in scores} == export_ids  # The same ids as the impressions export.
+    matrix = list(csv.reader(io.StringIO(files["matrix.csv"])))
+    assert len(matrix) == 3 and len(matrix[0]) == 3  # Two people; the opted-out one is left out.
+    assert env.s.live.audit_entries(action="export")[-2]["target"] == "truth"
+
+
+def test_export_truth_script_saves_a_dated_snapshot(env: Env, tmp_path: Path) -> None:
+    import os
+    import subprocess
+    import sys
+
+    matched(env)
+    folder = tmp_path / "snapshot"
+    environment = {**os.environ, "APP_MAIN_DB": str(env.settings.main_db), "APP_PERSONA_DB": str(env.settings.persona_db), "EXPORT_SALT": "test-salt"}
+    root = Path(__file__).resolve().parent.parent
+    done = subprocess.run([sys.executable, str(root / "scripts" / "export_truth.py"), str(folder)], env=environment, capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
+    assert sorted(p.name for p in folder.iterdir()) == ["README.txt", "matrix.csv", "participants.csv", "scores.csv"]
+    assert "2 participants, 2 ratings" in done.stdout
+    again = subprocess.run([sys.executable, str(root / "scripts" / "export_truth.py"), str(folder)], env=environment, capture_output=True, text=True)
+    assert again.returncode != 0  # It never overwrites a snapshot.
+    missing_salt = subprocess.run([sys.executable, str(root / "scripts" / "export_truth.py"), str(tmp_path / "x")], env={**environment, "EXPORT_SALT": ""}, capture_output=True, text=True)
+    assert missing_salt.returncode != 0 and "EXPORT_SALT" in missing_salt.stderr

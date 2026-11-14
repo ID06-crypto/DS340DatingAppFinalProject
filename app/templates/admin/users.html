@@ -22,6 +22,21 @@
 {% else %}
 
 <div class="numbered">
+<h2 id="saved-data">Saved data: the ground truth</h2>
+<p>Every score is stored in the database as it's given, so nothing here is lost when the page closes. To compare a model's predictions with what people actually thought, download the ground truth. Everyone in it has a <strong>participant id</strong>: a salted hash, never a name or email, stable for as long as <code>EXPORT_SALT</code> stays the same, and the same id the impressions export uses.</p>
+<ul>
+  <li><strong>participants.csv</strong>: participant id, gender, age band, and how many ratings each gave and received.</li>
+  <li><strong>scores.csv</strong>: one row per rating, with rater id, target id, score from 0 to 1, and when.</li>
+  <li><strong>matrix.csv</strong>: the whole grid of who likes whom: one row per rater, one column per person rated, blank where nobody has rated yet.</li>
+  <li><strong>README.txt</strong>: what every column means, and how to compare a model with it.</li>
+</ul>
+{% if has_salt %}
+<p><a class="button" href="/admin/truth.zip" download>Download the ground truth (.zip)</a></p>
+{% else %}
+<p class="notice">Set the <code>EXPORT_SALT</code> environment variable and restart the server to give people participant ids and enable this download.</p>
+{% endif %}
+<p><small>Each download is recorded in the audit log. To save a dated copy on the server instead, run <code>python scripts/export_truth.py</code>.</small></p>
+
 <h2>Interest</h2>
 <p>Each row is a rater, and each column is the person they rated. Darker means more interested. Hatched squares haven't been rated yet. People are grouped by gender, then ordered by the mean score they received, so the most liked people in each group come first. Hover over a square for details.</p>
 <div class="heatmap"><canvas data-heatmap="{{ interest_map }}" data-kind="interest" role="img" aria-label="Heat map of every participant's score for every other participant, from 0 to 1, with raters as rows and the people they rated as columns."></canvas></div>

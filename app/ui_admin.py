@@ -16,7 +16,7 @@ from app.actions import ActionError
 from app.deps import services
 from app.services import Services
 from app.web import page_admin, page_admin_any, redirect, render, require_csrf
-from live_store import Account
+from live_store import Account, utc_now
 
 router = APIRouter(prefix="/ui/admin")
 csrf = Depends(require_csrf)
@@ -147,7 +147,7 @@ def users(request: Request, admin: Account = Depends(page_admin), s: Services = 
     """Every participant's scores for every other, as heat maps, with descriptive charts.
     People appear as codes, never names, and each view is audited."""
     threshold = analytics.to_unit(s.settings.positive_threshold)
-    data = insights.load(s.settings.main_db, threshold)
+    data = insights.load(s.settings.main_db, threshold, s.settings.export_salt)
     s.live.audit(admin.account_id, "view_user_insights", None, {"people": len(data.people), "ratings": len(data.ratings)})
     effects = [
         {"effect": e, "chart": json.dumps(_bar_chart(e, horizontal=len(e.series) == 1 and len(e.labels) > 5)), "tall": len(e.labels) > 8}
@@ -157,6 +157,7 @@ def users(request: Request, admin: Account = Depends(page_admin), s: Services = 
         "data": data,
         "threshold": threshold,
         "threshold_10": s.settings.positive_threshold,
+        "has_salt": bool(s.settings.export_salt),
         "interest_map": json.dumps(data.interest_map),
         "reciprocal_map": json.dumps(data.reciprocal_map),
         "given_chart": json.dumps(_distribution_chart(data.gender_given, "Share of ratings given")),
@@ -212,6 +213,18 @@ def _export(s: Services, admin: Account, kind: str) -> list[dict]:
     rows = analytics.export_rows(s.settings.main_db, s.settings.export_salt)
     s.live.audit(admin.account_id, "export", kind, {"rows": len(rows)})
     return rows
+
+
+@router.get("/truth.zip")
+def truth_zip(admin: Account = Depends(page_admin), s: Services = Depends(services)) -> Response:
+    """The ground truth: every score between participants, by participant_id. See the README."""
+    if not s.settings.export_salt:
+        raise ActionError(409, "Set the EXPORT_SALT environment variable before exporting.")
+    data = insights.load(s.settings.main_db, analytics.to_unit(s.settings.positive_threshold), s.settings.export_salt)
+    s.live.audit(admin.account_id, "export", "truth", {"people": len(data.people), "rows": len(data.ratings)})
+    stamp = utc_now().strftime("%Y%m%d-%H%M")
+    return Response(insights.truth_zip(data), media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="ground-truth-{stamp}.zip"'})
 
 
 @router.get("/export.csv")
