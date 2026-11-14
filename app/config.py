@@ -27,6 +27,11 @@ def _list(name: str, default: str) -> tuple[str, ...]:
 @dataclass(frozen=True)
 class Settings:
     site_url: str = "http://localhost:8000"
+    # "production" turns on the startup safety checks in production_problems().
+    app_env: str = "development"
+    # Copies of the database made by the running app. 0 turns them off.
+    backup_every_hours: int = 0
+    backup_keep: int = 14
     allowed_email_domains: tuple[str, ...] = ()  # Empty means any domain.
     admin_emails: tuple[str, ...] = ()
     main_db: Path = LIVE_DIR / "main.db"
@@ -79,4 +84,33 @@ class Settings:
             admin_step_up_minutes=int(os.environ.get("ADMIN_STEP_UP_MINUTES", cls.admin_step_up_minutes)),
             export_salt=os.environ.get("EXPORT_SALT", ""),
             source_repo_url=os.environ.get("SOURCE_REPO_URL", ""),
+            app_env=os.environ.get("APP_ENV", cls.app_env).strip().lower(),
+            backup_every_hours=int(os.environ.get("BACKUP_EVERY_HOURS", cls.backup_every_hours)),
+            backup_keep=int(os.environ.get("BACKUP_KEEP", cls.backup_keep)),
         )
+
+    @property
+    def production(self) -> bool:
+        return self.app_env == "production"
+
+    @property
+    def backup_dir(self) -> Path:
+        return self.main_db.parent / "backups"
+
+    def production_problems(self) -> list[str]:
+        """Settings that would be unsafe, or lose data, on the real site."""
+        problems = []
+        if not self.site_url.startswith("https://"):
+            problems.append("SITE_URL must be the site's https:// address.")
+        if not self.cookie_secure:
+            problems.append("COOKIE_SECURE must be true.")
+        if len(self.export_salt) < 16:
+            problems.append("EXPORT_SALT must be set to a long random secret, and never changed.")
+        if not self.admin_emails:
+            problems.append("ADMIN_EMAILS must list at least one admin.")
+        for path in (self.main_db, self.persona_db):
+            if path.resolve().is_relative_to(ROOT.resolve()):
+                problems.append(f"{path} is inside the code folder, which is wiped on every deploy. Put the databases on the persistent disk.")
+        if self.backup_every_hours <= 0:
+            problems.append("BACKUP_EVERY_HOURS must be set, for example to 24.")
+        return problems

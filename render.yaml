@@ -1,0 +1,36 @@
+# Render blueprint for the live study. In Render: New → Blueprint → pick this repository.
+# It asks for the values marked sync: false. See "Deploying" in the README.
+services:
+  - type: web
+    name: bu-matching-study
+    runtime: python
+    plan: starter            # $7/month. Free services can't have a disk, and would lose the data.
+    region: virginia         # Closest to Boston.
+    branch: main
+    buildCommand: pip install -r requirements-app.txt
+    # One process only: rate limits and matchers live in memory, and SQLite is on one disk.
+    startCommand: uvicorn --factory app.main:create_app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips "*" --no-access-log
+    healthCheckPath: /healthz
+    disk:
+      name: study-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: APP_ENV
+        value: production
+      - key: APP_MAIN_DB
+        value: /var/data/main.db
+      - key: APP_PERSONA_DB
+        value: /var/data/personas.db
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: BACKUP_EVERY_HOURS
+        value: "24"
+      - key: EXPORT_SALT
+        generateValue: true  # A random secret Render makes once. Never change it during the study.
+      - key: SITE_URL
+        sync: false          # The site's address, like https://bu-matching-study.onrender.com
+      - key: ADMIN_EMAILS
+        sync: false          # Comma-separated, for example dorich20@bu.edu,acauti@bu.edu

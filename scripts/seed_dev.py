@@ -43,6 +43,8 @@ def set_dev_passwords(live: LiveStore) -> None:
 
 def main() -> None:
     settings = Settings.from_env()
+    if settings.production:
+        sys.exit("Refusing to add fake users: APP_ENV is production.")
     settings.main_db.parent.mkdir(parents=True, exist_ok=True)
     manager = ProfileManager(settings.main_db, settings.persona_db)
     live = LiveStore(settings.main_db)

@@ -7,8 +7,8 @@ standard input. It uses the same settings as the server (APP_MAIN_DB and so on),
 the account if it doesn't exist, and makes it an approved admin. The password is stored
 only as a scrypt hash. Admins can change it later on the admin Password page.
 
-Also add the email to ADMIN_EMAILS where the server runs, so the role is clear from the
-configuration.
+This is the only way to make an admin: joining on the site never does, because nothing
+checks that people own the email they give. On Render, run it in the service's Shell tab.
 """
 
 import getpass
@@ -40,6 +40,9 @@ def main() -> None:
     email = normalize_email(sys.argv[1], settings.allowed_email_domains)
     if email is None:
         sys.exit("That isn't a valid email address.")
+    listed = {normalize_email(e) for e in settings.admin_emails}
+    if settings.production and email not in listed:
+        sys.exit(f"{email} isn't in ADMIN_EMAILS. Add it there first, so the admins are written down.")
     password = read_password()
     problem = password_problem(password)
     if problem:

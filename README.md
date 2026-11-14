@@ -385,7 +385,7 @@ The point of the live study is a true record of how much each participant likes 
 - Wrong passwords are limited to 5 per email and `LOGIN_REQUESTS_PER_IP` per address every 15 minutes. Only failures count, so people sharing a campus network aren't locked out.
 - People change their password on Me → Change password, which needs the current one and signs them out everywhere else.
 - **Forgotten passwords:** an admin opens Approvals, finds the person, and chooses Reset password. The page shows a temporary password once, like `kq7m-x2pd-9wfa`, for the admin to pass on in person or by their own email. The person is signed out everywhere, and must choose a new password as soon as they sign in with it.
-- **Admins:** emails in `ADMIN_EMAILS` become approved admins when they join. `python scripts/set_admin_password.py someone@bu.edu` makes an existing or new account an admin and sets its password, without showing it. Admin pages need a sign-in from the last `ADMIN_STEP_UP_MINUTES`, and otherwise ask for the password again.
+- **Admins:** joining never makes anyone an admin, because nothing checks that people own the email they give. `python scripts/set_admin_password.py someone@bu.edu` makes an existing or new account an admin and sets its password, without showing it. In production, the email must be in `ADMIN_EMAILS`. Admin pages need a sign-in from the last `ADMIN_STEP_UP_MINUTES`, and otherwise ask for the password again.
 - Sign-ups, sign-ins, password changes, and resets are audited, without the passwords.
 
 **Opting out:** users who opt out always get `DEFAULT_MATCHER`, and their data is left out of all analytics and exports. **Pausing** hides a user from everyone's pool without deleting anything.
@@ -478,6 +478,37 @@ People rate from 1 to 10. Ratings are stored on the same 0 to 1 scale as Jev's, 
 - **Errors:** pages show friendly 403, 404, and 500 pages without internal details. Validation errors never repeat the values that were sent.
 - **Deleting an account:** this removes the profile, preferences, ratings, impressions, matches, surveys, blocks, reports the user filed, sessions, and their password. Reports about the user are kept as safety records, with the user removed. Audit rows are kept, with the user's ids replaced by `[deleted]`.
 - **Real people and agents stay apart:** the app uses its own database (`data/live/`). It refuses to start if `APP_MAIN_DB` or `APP_PERSONA_DB` points at any agent database in `paths.py`, or at a database holding agent profiles or personas. The live pool also never includes a profile with `agent` set. A read-only, checksummed snapshot of all agent data taken before the live study is in `archive/agent-data-2026-11-14/` (not in git).
+
+## Deploying on Render
+
+The live study runs on [Render](https://render.com): one Starter web service ($7 a month) with a 1 GB persistent disk ($0.25 a month) for the database, which comes to about $7.25 a month. `render.yaml` describes it all. The free plan won't work: it has no disk, so the database would be wiped on every restart.
+
+**Before the first deploy**, commit and push everything, including `render.yaml`, `requirements-app.txt`, and `consent/v2.md`. Render builds from GitHub, so anything not pushed won't be there.
+
+1. **Create the service.** Sign in to Render with GitHub, and give it access to this repository. Choose **New → Blueprint**, pick the repository, and Render reads `render.yaml`. It asks for two values:
+   - `SITE_URL`: `https://bu-matching-study.onrender.com`. If Render gives the service a different address, because that name is taken, change `SITE_URL` to match afterwards, in **Environment**. It must match exactly, or every form is refused.
+   - `ADMIN_EMAILS`: `dorich20@bu.edu,acauti@bu.edu`.
+   Render asks for a card, since the Starter plan is paid. The first build takes a few minutes. When it's live, `https://<your address>/healthz` shows `{"ok":true}`.
+2. **Make the admins.** In the service, open **Shell** and run, once for each admin:
+   ```bash
+   python scripts/set_admin_password.py dorich20@bu.edu
+   ```
+   It asks for the password twice, without showing it. Then sign in on the site's start page, agree to the consent form, and you're on the admin pages.
+3. **Set when rating opens**, on Admin → Controls, and try the site with the team: join as a participant, approve yourselves, and rate each other.
+4. **Before inviting anyone, clear out the test accounts.** Delete each one from Me → Delete my account, or ask for a fresh database: in Shell, `rm /var/data/main.db*` and restart the service, then make the admins again.
+
+**What the settings do in production.** `APP_ENV=production` makes the app refuse to start with unsafe settings, and list what's wrong in the deploy log: plain `http`, cookies that aren't secure, no `EXPORT_SALT`, no `ADMIN_EMAILS`, no backups, or databases outside the disk. Render generates `EXPORT_SALT` once. Never change it during the study, or new participant ids won't match old ones.
+
+**Backups.** Three layers:
+- **Daily copies on the server.** The app copies the database every 24 hours (`BACKUP_EVERY_HOURS`) into `/var/data/backups`, keeping the last 14.
+- **Render snapshots.** Render also snapshots the whole disk daily, for 7 days. Render warns that restoring a database from a disk snapshot can corrupt it, so prefer the app's own copies.
+- **Copies you keep off the server.** Both of the above live with the server, so download a copy now and then from Admin → Overview → Download a full backup, and keep it somewhere private. It holds emails, real names, and password hashes. Downloading the ground truth from Admin → Users gives the anonymized data for analysis.
+
+**Updating the site.** Push to `main`, and Render redeploys. With a disk attached, it stops the old version before starting the new one, so the site is down for a few seconds. The database stays.
+
+**Restoring a backup.** In Shell, stop using the site, then `cp /var/data/backups/main-<time>.db /var/data/main.db`, remove `/var/data/main.db-wal` and `/var/data/main.db-shm`, and restart the service.
+
+**One process only.** Rate limits and matcher state live in memory, and SQLite lives on one disk, so never scale the service to more than one instance. Render doesn't allow it with a disk anyway.
 
 ## Changing the schema
 

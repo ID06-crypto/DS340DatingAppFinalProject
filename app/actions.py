@@ -55,8 +55,12 @@ def _new_session(s: Services, account: Account) -> str:
 
 
 def sign_up(s: Services, raw_email: str, password: str, client_ip: str) -> tuple[Account, str]:
-    """Create an account with a password, and sign it in. It waits for an admin to
-    approve it, except for ADMIN_EMAILS, which are approved admins straight away."""
+    """Create an account with a password, and sign it in. It waits for an admin to approve it.
+
+    Joining never makes anyone an admin, even with an ADMIN_EMAILS address: nothing checks
+    that people own the email they give, so anyone could otherwise claim an admin address.
+    Admins are made with scripts/set_admin_password.py, on the server.
+    """
     if s.login_per_ip.exceeded(client_ip):
         raise ActionError(429, TOO_MANY)
     try:
@@ -69,7 +73,7 @@ def sign_up(s: Services, raw_email: str, password: str, client_ip: str) -> tuple
         admins = {normalize_email(e) for e in s.settings.admin_emails}
         if s.controls().signups_paused and email not in admins:
             raise ActionError(403, "New sign-ups are closed right now.")
-        account, created = s.live.get_or_create_account(email, admin=email in admins)
+        account, created = s.live.get_or_create_account(email, admin=False)
         if not created:
             raise ActionError(409, "There's already an account with that email. Sign in instead, or ask the research team to reset your password.")
     except ActionError:

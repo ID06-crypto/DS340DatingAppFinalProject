@@ -6,12 +6,13 @@ opted out.
 
 import json
 from datetime import datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 
-from app import actions, analytics, insights
+from app import actions, analytics, backups, insights
 from app.actions import ActionError
 from app.deps import services
 from app.services import Services
@@ -233,6 +234,21 @@ def _export(s: Services, admin: Account, kind: str) -> list[dict]:
     rows = analytics.export_rows(s.settings.main_db, s.settings.export_salt)
     s.live.audit(admin.account_id, "export", kind, {"rows": len(rows)})
     return rows
+
+
+@router.get("/backup.db")
+def backup_download(admin: Account = Depends(page_admin), s: Services = Depends(services)) -> Response:
+    """A full, consistent copy of the live database, to keep somewhere other than the server.
+    It holds emails, real names, and password hashes, so it's for the research team only."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as folder:
+        path = backups.backup_to(s.settings.main_db, Path(folder) / "main.db")
+        data = path.read_bytes()
+    s.live.audit(admin.account_id, "download_backup", None, {"bytes": len(data)})
+    stamp = utc_now().strftime("%Y%m%d-%H%M")
+    return Response(data, media_type="application/vnd.sqlite3",
+                    headers={"Content-Disposition": f'attachment; filename="study-backup-{stamp}.db"'})
 
 
 @router.get("/truth.zip")

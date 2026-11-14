@@ -55,6 +55,8 @@ class Env:
 
     def login(self, email: str) -> TestClient:
         client = self.client()
+        if normalize_email(email) in {normalize_email(e) for e in self.settings.admin_emails}:
+            self.make_admin(email)
         body = {"email": email, "password": PASSWORD}
         response = client.post("/auth/login", json=body)
         if response.status_code == 401:
@@ -66,6 +68,14 @@ class Env:
         client = self.login(email)
         assert client.post("/auth/consent", json={"version": "2"}).status_code == 200
         return client
+
+    def make_admin(self, email: str) -> None:
+        """What scripts/set_admin_password.py does on the server."""
+        from app.security import hash_password
+
+        account, _ = self.s.live.get_or_create_account(normalize_email(email), admin=True)
+        if self.s.live.password_hash(account.account_id) is None:
+            self.s.live.set_password_hash(account.account_id, hash_password(PASSWORD))
 
     def admin(self) -> TestClient:
         """Signed in once per test."""
@@ -173,8 +183,9 @@ def test_sign_up_rules(env: Env) -> None:
     assert env.client().post("/auth/signup", json={"email": "a@bu.edu", "password": PASSWORD}).status_code == 201
     taken = env.client().post("/auth/signup", json={"email": "A@bu.edu", "password": "another one"})
     assert taken.status_code == 409 and "already an account" in taken.text
-    admin = env.client().post("/auth/signup", json={"email": ADMIN_EMAIL, "password": PASSWORD}).json()
-    assert (admin["role"], admin["status"]) == ("admin", "approved")
+    # Nothing proves who owns an email, so joining never makes anyone an admin.
+    claimed = env.client().post("/auth/signup", json={"email": ADMIN_EMAIL, "password": PASSWORD}).json()
+    assert (claimed["role"], claimed["status"]) == ("user", "pending")
     env.s.live.set_setting("signups_paused", True)
     assert env.client().post("/auth/signup", json={"email": "late@bu.edu", "password": PASSWORD}).status_code == 403
 

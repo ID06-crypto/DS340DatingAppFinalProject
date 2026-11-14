@@ -712,3 +712,17 @@ def test_admins_reset_forgotten_passwords_to_a_temporary_one(env: Env) -> None:
     assert done.headers["location"] == "/discover"
     assert browser.get("/discover").status_code == 200
     assert {"password_reset", "password_change"} <= {e["action"] for e in env.s.live.audit_entries()}
+
+
+def test_admins_download_a_full_backup_and_it_is_audited(env: Env, tmp_path: Path) -> None:
+    matched(env)
+    browser, _ = member(env, "v@bu.edu")
+    assert browser.get("/admin/backup.db").status_code == 403
+    response = admin_page(env).get("/admin/backup.db")
+    assert response.status_code == 200 and response.headers["content-disposition"].startswith('attachment; filename="study-backup-')
+    copy = tmp_path / "copy.db"
+    copy.write_bytes(response.content)
+    with sqlite3.connect(copy) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0] >= 3
+        assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    assert env.s.live.audit_entries(action="download_backup")

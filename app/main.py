@@ -15,6 +15,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app import routes_admin, routes_auth, routes_feed, routes_me, routes_social, ui, ui_admin
 from app.web import PageRouting, Redirect, is_page, redirect, render
 from app.actions import ActionError
+from app.backups import start_backups
 from app.config import Settings
 from app.matchers import build_matchers
 from app.ratelimit import RateLimiter
@@ -53,6 +54,8 @@ def create_app(
     rng: random.Random | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
+    if settings.production and (problems := settings.production_problems()):
+        raise RuntimeError("Unsafe settings for APP_ENV=production:\n- " + "\n- ".join(problems))
     refuse_agent_databases(settings)
     settings.main_db.parent.mkdir(parents=True, exist_ok=True)
     manager = ProfileManager(settings.main_db, settings.persona_db)  # Creates every table.
@@ -87,6 +90,15 @@ def create_app(
         heading, default = error_pages.get(status, ("Something went wrong", "Please try again later."))
         # Only messages written for users are shown, never internal details.
         return render(request, "error.html", {"heading": heading, "message": message or default}, status)
+
+    if settings.backup_every_hours > 0:
+        app.state.backups = start_backups(settings.main_db, settings.backup_dir, settings.backup_every_hours, settings.backup_keep)
+
+    @app.get("/healthz", include_in_schema=False)
+    def healthz() -> dict:
+        """For the host's health checks: the app is up and can read the database."""
+        services.live.get_setting("match_threshold")
+        return {"ok": True}
 
     @app.exception_handler(Redirect)
     def go(request: Request, error: Redirect) -> Response:
