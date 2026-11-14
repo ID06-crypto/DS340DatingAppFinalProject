@@ -45,6 +45,10 @@
 <p>For each pair, the sum of both people's scores for each other, from 0 to 2. It's filled in only where both have rated each other, so the grid is symmetric. Dark squares are pairs who both liked each other.</p>
 <div class="heatmap"><canvas data-heatmap="{{ reciprocal_map }}" data-kind="reciprocal" role="img" aria-label="Symmetric heat map of the sum of each pair's scores for each other, from 0 to 2, where both have rated."></canvas></div>
 
+{% if not data.ratings %}
+<h2>Scores and what goes with them</h2>
+<p class="notice">No ratings yet. The charts and tables comparing groups, and what goes with interest, appear here once people start rating{% if data.summary.people < 2 %}, which needs at least two approved participants{% endif %}.</p>
+{% else %}
 <h2>Scores given and received, by gender</h2>
 <p>How each group's scores are spread across the 0 to 1 range, as shares of that group's ratings, so groups of different sizes can be compared.</p>
 <div class="two-up">
@@ -74,7 +78,7 @@
 <p>The share of ratings at {{ threshold|round(3) }} or higher ({{ threshold_10 }} on the 1 to 10 scale), from each group of raters (rows) to each group of people rated (columns), with the mean score and the number of ratings.</p>
 <div class="table-scroll">
 <table>
-  <thead><tr><th scope="col">Rater ↓ · Rated →</th>{% for cell in data.liking[0].cells %}<th scope="col">{{ cell.target }}</th>{% endfor %}</tr></thead>
+  <thead><tr><th scope="col">Rater ↓ · Rated →</th>{% if data.liking %}{% for cell in data.liking[0].cells %}<th scope="col">{{ cell.target }}</th>{% endfor %}{% endif %}</tr></thead>
   <tbody>
   {% for row in data.liking %}
   <tr><th scope="row">{{ row.rater }}</th>{% for cell in row.cells %}<td>{% if cell.n %}<strong>{{ (cell.share_positive * 100)|round(1) }}%</strong> liked<small>mean {{ cell.mean }} · n = {{ cell.n }}</small>{% else %}n/a{% endif %}</td>{% endfor %}</tr>
@@ -102,6 +106,7 @@
   </figure>
 {% endfor %}
 </div>
+{% endif %}
 
 <h2 id="methods">How these numbers are calculated</h2>
 <div class="methods">

@@ -726,3 +726,20 @@ def test_admins_download_a_full_backup_and_it_is_audited(env: Env, tmp_path: Pat
         assert conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0] >= 3
         assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
     assert env.s.live.audit_entries(action="download_backup")
+
+
+@pytest.mark.parametrize("people", [1, 2])
+def test_users_page_works_before_anyone_has_rated(env: Env, people: int) -> None:
+    for i in range(people):
+        member(env, f"p{i}@bu.edu", "woman" if i else "man", ("man", "woman"))
+    response = admin_page(env).get("/admin/users")
+    assert response.status_code == 200, response.text[:500]
+    assert "No ratings yet" in response.text
+
+
+@pytest.mark.parametrize("path", ["/admin", "/admin/approvals", "/admin/users", "/admin/compare", "/admin/reports",
+                                  "/admin/controls", "/admin/audit", "/admin/export.csv", "/admin/truth.zip", "/admin/backup.db"])
+def test_every_admin_page_works_with_people_but_no_ratings(env: Env, path: str) -> None:
+    member(env, "a@bu.edu", "man", ("woman",))
+    member(env, "b@bu.edu", "woman", ("man",))
+    assert admin_page(env).get(path).status_code == 200, path
