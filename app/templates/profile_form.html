@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Your profile{% endblock %}
 {% block content %}
+{% if not editing %}<p class="kicker">Step 2 of 3</p>{% endif %}
 <h1>{% if editing %}Edit your profile{% else %}Your profile{% endif %}</h1>
 <p>Other people see your first name and everything below except your last name.</p>
 <form method="post" action="{{ action }}" novalidate>

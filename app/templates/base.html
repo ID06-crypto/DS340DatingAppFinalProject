@@ -3,28 +3,51 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f6f3ea">
   <meta name="htmx-config" content='{"includeIndicatorStyles": false, "allowEval": false, "allowScriptTags": false}'>
   <title>{% block title %}Matching study{% endblock %} · BU matching study</title>
-  <link rel="stylesheet" href="/static/vendor/pico.classless.min.css">
+  <link rel="preload" href="/static/vendor/fonts/caveat-latin-700-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/vendor/htmx.min.js" defer></script>
   <script src="/static/app.js" defer></script>
   {% block head %}{% endblock %}
 </head>
-<body{% if csrf %} hx-headers='{"X-CSRF-Token": "{{ csrf }}"}'{% endif %}>
+<body class="{% if is_member %}member{% endif %}"{% if csrf %} hx-headers='{"X-CSRF-Token": "{{ csrf }}"}'{% endif %}>
   <a class="skip-link" href="#main">Skip to content</a>
+  {# Pencil filters and a hatch pattern, used by the stylesheet and the drawings. #}
+  <svg class="defs" aria-hidden="true" focusable="false">
+    <defs>
+      <filter id="rough" x="-3%" y="-3%" width="106%" height="106%">
+        <feTurbulence type="fractalNoise" baseFrequency="0.025" numOctaves="2" seed="7" result="noise"/>
+        <feDisplacementMap in="SourceGraphic" in2="noise" scale="2.6" xChannelSelector="R" yChannelSelector="G"/>
+      </filter>
+      <filter id="rough-strong" x="-5%" y="-5%" width="110%" height="110%">
+        <feTurbulence type="fractalNoise" baseFrequency="0.05" numOctaves="2" seed="3" result="noise"/>
+        <feDisplacementMap in="SourceGraphic" in2="noise" scale="4.5" xChannelSelector="R" yChannelSelector="G"/>
+      </filter>
+      <pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+        <line x1="0" y1="0" x2="0" y2="6" stroke="#8a8780" stroke-width="1.1"/>
+      </pattern>
+    </defs>
+  </svg>
+  <header class="masthead {{ self.main_class() }}">
+    <a class="brand" href="{% if is_member %}/discover{% else %}/{% endif %}">matching study<span>BU research</span></a>
+    {% if is_member %}
+    <nav class="primary" aria-label="Main">
+      <ul>
+        <li><a href="/discover" {% if nav == "discover" %}aria-current="page"{% endif %}>Discover</a></li>
+        <li><a href="/matches" {% if nav == "matches" %}aria-current="page"{% endif %}>Matches</a></li>
+        <li><a href="/me" {% if nav == "me" %}aria-current="page"{% endif %}>Me</a></li>
+        {% if is_admin %}<li><a href="/admin" {% if nav == "admin" %}aria-current="page"{% endif %}>Admin</a></li>{% endif %}
+      </ul>
+    </nav>
+    {% endif %}
+  </header>
   <main id="main" class="{% block main_class %}{% endblock %}">
     {% block content %}{% endblock %}
   </main>
-  {% if is_member %}
-  <nav class="bottom" aria-label="Main">
-    <ul>
-      <li><a href="/discover" {% if nav == "discover" %}aria-current="page"{% endif %}>Discover</a></li>
-      <li><a href="/matches" {% if nav == "matches" %}aria-current="page"{% endif %}>Matches</a></li>
-      <li><a href="/me" {% if nav == "me" %}aria-current="page"{% endif %}>Me</a></li>
-      {% if is_admin %}<li><a href="/admin" {% if nav == "admin" %}aria-current="page"{% endif %}>Admin</a></li>{% endif %}
-    </ul>
-  </nav>
+  {% if not is_member %}
+  <footer class="site-footer">A student research project at Boston University · <a href="/transparency">How this works</a></footer>
   {% endif %}
 </body>
 </html>

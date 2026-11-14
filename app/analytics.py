@@ -312,7 +312,7 @@ def pseudonym(user_id: str, salt: str) -> str:
 
 
 def export_rows(db_path: str | Path, salt: str) -> list[dict[str, Any]]:
-    """One row per impression, pseudonymized. No emails, names, free text, photos,
+    """One row per impression, pseudonymized. No emails, names, free text,
     religion, or exact ages. Opted-out users are already left out by load_rows."""
     return [
         {

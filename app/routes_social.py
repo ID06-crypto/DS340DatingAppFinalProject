@@ -1,4 +1,4 @@
-"""Matches, chat, blocks, and reports (JSON API)."""
+"""Matches, blocks, and reports (JSON API)."""
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field
@@ -9,11 +9,6 @@ from app.services import Services
 from live_store import Account, ReportReason
 
 router = APIRouter()
-
-
-class MessageIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    body: str = Field(min_length=1, max_length=2000)
 
 
 class BlockIn(BaseModel):
@@ -42,16 +37,6 @@ def list_matches(account: Account = Depends(approved_user), s: Services = Depend
 def unmatch(match_id: str, account: Account = Depends(approved_user), s: Services = Depends(services)) -> dict:
     actions.unmatch(s, account, match_id)
     return {"unmatched": True}
-
-
-@router.get("/matches/{match_id}/messages")
-def read_messages(match_id: str, after: int = 0, account: Account = Depends(approved_user), s: Services = Depends(services)) -> list[dict]:
-    return [m.model_dump() for m in actions.read_messages(s, account, match_id, after)]
-
-
-@router.post("/matches/{match_id}/messages", status_code=201)
-def send_message(match_id: str, body: MessageIn, account: Account = Depends(approved_user), s: Services = Depends(services)) -> dict:
-    return actions.send_message(s, account, match_id, body.body).model_dump()
 
 
 @router.post("/blocks", status_code=201)

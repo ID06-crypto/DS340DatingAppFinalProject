@@ -1,4 +1,3 @@
-import io
 import json
 import logging
 import random
@@ -10,13 +9,11 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from PIL import Image
 
 from app import matchers as matcher_registry
 from app.config import Settings
 from app.emails import ConsoleEmailSender
 from app.main import create_app
-from app.photos import MAX_PHOTO_BYTES
 from app.security import RedactTokens, normalize_email
 from live_store import sha256
 from matching import Matcher, PublicView, RandomMatcher
@@ -42,19 +39,6 @@ def profile_body(name: str = "Sam", gender: str = "man", **overrides: Any) -> di
         "looking_for": "long-term",
     }
     return {**body, **overrides}
-
-
-def jpeg(color: str = "red", size: tuple[int, int] = (64, 48), exif: bool = False) -> bytes:
-    image = Image.new("RGB", size, color)
-    output = io.BytesIO()
-    if exif:
-        data = Image.Exif()
-        data[0x010F] = "SECRETCAMERA"  # Make
-        data[0x8825] = {1: "N", 2: (42.0, 21.0, 0.0), 3: "W", 4: (71.0, 6.0, 0.0)}  # GPS
-        image.save(output, "JPEG", exif=data)
-    else:
-        image.save(output, "JPEG")
-    return output.getvalue()
 
 
 @dataclass
@@ -84,7 +68,7 @@ class Env:
 
     def consented(self, email: str) -> TestClient:
         client = self.login(email)
-        assert client.post("/auth/consent", json={"version": "1"}).status_code == 200
+        assert client.post("/auth/consent", json={"version": "2"}).status_code == 200
         return client
 
     def admin(self) -> TestClient:
@@ -110,8 +94,6 @@ class Env:
         user_id = created.json()["profile"]["user_id"]
         body = {"interested_in": interested_in if isinstance(interested_in, str) else list(interested_in)}
         assert client.put("/me/preferences", json=body).status_code == 200
-        upload = client.post("/me/photos", files={"file": ("me.jpg", jpeg(), "image/jpeg")})
-        assert upload.status_code == 201, upload.text
         if approve:
             response = self.admin().post(f"/admin/accounts/{self.account_id(client)}/approve")
             assert response.status_code == 200, response.text
@@ -125,7 +107,6 @@ def env(tmp_path: Path) -> Env:
         admin_emails=(ADMIN_EMAIL,),
         main_db=tmp_path / "main.db",
         persona_db=tmp_path / "personas.db",
-        photo_dir=tmp_path / "photos",
         cookie_secure=False,  # TestClient uses plain http.
         login_requests_per_email=3,
         login_requests_per_ip=1000,
@@ -135,13 +116,14 @@ def env(tmp_path: Path) -> Env:
 
 
 def shown_ids(client: TestClient, limit: int = 50) -> list[str]:
-    """Walk the whole feed, returning everyone it shows, without rating anyone."""
+    """Walk the whole feed, rating everyone it shows 1 (so nobody matches), in order."""
     shown = []
     for _ in range(limit):
         response = client.get("/feed/next").json()
         if response["profile"] is None:
             return shown
         shown.append(response["profile"]["user_id"])
+        assert client.post("/ratings", json={"impression_id": response["impression_id"], "score": 1}).status_code == 200
     raise AssertionError("the feed never ran out")
 
 
@@ -161,9 +143,9 @@ def rate_next(client: TestClient, score: float) -> dict[str, Any]:
         ("Jane@BU.edu", "jane@bu.edu"),
         ("  jane+dating@bu.edu ", "jane@bu.edu"),
         ("jane.doe+a+b@bu.edu", "jane.doe@bu.edu"),
-        ("jane@gmail.com", None),
-        ("jane@bu.edu.evil.com", None),
-        ("jane@sub.bu.edu", None),
+        ("jane@gmail.com", "jane@gmail.com"),
+        ("jane@sub.bu.edu", "jane@sub.bu.edu"),
+        ("jane@localhost", None),
         ("+tag@bu.edu", None),
         ("no-at-sign", None),
         ("a@b@bu.edu", None),
@@ -171,7 +153,14 @@ def rate_next(client: TestClient, score: float) -> dict[str, Any]:
     ],
 )
 def test_email_normalization(raw: str, expected: str | None) -> None:
-    assert normalize_email(raw, ["bu.edu"]) == expected
+    assert normalize_email(raw) == expected
+
+
+def test_an_allowed_domain_list_still_restricts_when_set() -> None:
+    assert normalize_email("jane@bu.edu", ["bu.edu"]) == "jane@bu.edu"
+    assert normalize_email("jane@gmail.com", ["bu.edu"]) is None
+    assert normalize_email("jane@bu.edu.evil.com", ["bu.edu"]) is None
+    assert normalize_email("jane@sub.bu.edu", ["bu.edu"]) is None
 
 
 @pytest.mark.parametrize("email", ["someone@gmail.com", "not an email", "x@bu.edu.com", "unknown@bu.edu"])
@@ -181,11 +170,19 @@ def test_request_link_gives_the_same_reply_for_any_address(env: Env, email: str)
     assert response.json() == {"message": "If that address can sign in, a link is on its way."}
 
 
-def test_links_are_only_sent_to_allowed_domains(env: Env) -> None:
-    env.client().post("/auth/request-link", json={"email": "jane@gmail.com"})
+def test_links_go_to_any_domain_unless_a_list_is_configured(env: Env, tmp_path: Path) -> None:
+    env.client().post("/auth/request-link", json={"email": "not an email"})
     assert env.sender.outbox == []
-    env.client().post("/auth/request-link", json={"email": "Jane+x@BU.edu"})
-    assert [m["to"] for m in env.sender.outbox] == ["jane@bu.edu"]
+    env.client().post("/auth/request-link", json={"email": "Jane+x@Gmail.com"})
+    assert [m["to"] for m in env.sender.outbox] == ["jane@gmail.com"]
+
+    settings = Settings(site_url=SITE, main_db=tmp_path / "m3.db", persona_db=tmp_path / "p3.db", allowed_email_domains=("bu.edu",))
+    sender = ConsoleEmailSender(stream=None)
+    client = TestClient(create_app(settings, email_sender=sender), headers={"Origin": SITE})
+    client.post("/auth/request-link", json={"email": "jane@gmail.com"})
+    assert sender.outbox == []
+    client.post("/auth/request-link", json={"email": "Jane+x@BU.edu"})
+    assert [m["to"] for m in sender.outbox] == ["jane@bu.edu"]
 
 
 def test_login_tokens_are_hashed_single_use_and_expire(env: Env) -> None:
@@ -223,7 +220,7 @@ def test_sessions_are_hashed_and_cookies_are_locked_down(env: Env) -> None:
 
 
 def test_secure_cookie_flag_is_set_when_configured(tmp_path: Path) -> None:
-    settings = Settings(site_url=SITE, main_db=tmp_path / "m.db", persona_db=tmp_path / "p.db", photo_dir=tmp_path / "ph", cookie_secure=True)
+    settings = Settings(site_url=SITE, main_db=tmp_path / "m.db", persona_db=tmp_path / "p.db", cookie_secure=True)
     sender = ConsoleEmailSender(stream=None)
     env = Env(create_app(settings, email_sender=sender), settings, sender)
     client = env.client()
@@ -238,7 +235,7 @@ def test_per_email_limit_is_silent_and_per_ip_limit_is_429(env: Env, tmp_path: P
         assert env.client().post("/auth/request-link", json={"email": "jane@bu.edu"}).status_code == 200
     assert len(env.sender.outbox) == env.settings.login_requests_per_email
 
-    settings = Settings(site_url=SITE, main_db=tmp_path / "m2.db", persona_db=tmp_path / "p2.db", photo_dir=tmp_path / "ph2", login_requests_per_ip=2)
+    settings = Settings(site_url=SITE, main_db=tmp_path / "m2.db", persona_db=tmp_path / "p2.db", login_requests_per_ip=2)
     limited = TestClient(create_app(settings, email_sender=ConsoleEmailSender(stream=None)), headers={"Origin": SITE})
     codes = [limited.post("/auth/request-link", json={"email": f"u{i}@bu.edu"}).status_code for i in range(3)]
     assert codes == [200, 200, 429]
@@ -263,31 +260,27 @@ def test_admin_emails_get_admin_role_and_auto_approval(env: Env) -> None:
 
 def test_consent_is_required_for_everything_but_auth(env: Env) -> None:
     client = env.login("jane@bu.edu")
-    assert client.get("/auth/consent").json()["version"] == "1"
-    assert "aren't\nused to train new models" in client.get("/auth/consent").json()["text"]
+    assert client.get("/auth/consent").json()["version"] == "2"
+    assert "aren't used to train" in client.get("/auth/consent").json()["text"]
     assert client.post("/me/profile", json=profile_body()).status_code == 403
     assert client.get("/feed/next").status_code == 403
     assert client.post("/auth/consent", json={"version": "0"}).status_code == 409
-    assert client.post("/auth/consent", json={"version": "1"}).status_code == 200
+    assert client.post("/auth/consent", json={"version": "2"}).status_code == 200
     assert client.post("/me/profile", json=profile_body()).status_code == 201
 
 
-def test_unapproved_accounts_get_403_on_feed_ratings_matches_and_chat(env: Env) -> None:
+def test_unapproved_accounts_get_403_on_feed_ratings_and_matches(env: Env) -> None:
     client, _ = env.user("jane@bu.edu", approve=False)
     assert client.get("/feed/next").status_code == 403
     assert client.post("/ratings", json={"impression_id": "x", "score": 5}).status_code == 403
     assert client.get("/matches").status_code == 403
-    assert client.get("/matches/x/messages").status_code == 403
-    assert client.post("/matches/x/messages", json={"body": "hi"}).status_code == 403
     assert client.post("/blocks", json={"user_id": "x"}).status_code == 403
-    # Their own profile, preferences, and photos still work.
+    # Their own profile and preferences still work.
     assert client.get("/me/profile").status_code == 200
     assert client.get("/me/preferences").status_code == 200
-    photo_id = client.get("/me").json()["photo_ids"][0]
-    assert client.get(f"/photos/{photo_id}").status_code == 200
 
 
-def test_approval_requires_consent_profile_preferences_and_photo(env: Env) -> None:
+def test_approval_requires_consent_profile_and_preferences(env: Env) -> None:
     admin = env.admin()
     client = env.login("jane@bu.edu")
     account_id = env.account_id(client)
@@ -296,13 +289,11 @@ def test_approval_requires_consent_profile_preferences_and_photo(env: Env) -> No
         response = admin.post(f"/admin/accounts/{account_id}/approve")
         return response.json()["detail"]["missing"] if response.status_code == 409 else []
 
-    assert missing() == ["consent", "profile", "photo"]
-    client.post("/auth/consent", json={"version": "1"})
+    assert missing() == ["consent", "profile"]
+    client.post("/auth/consent", json={"version": "2"})
     client.post("/me/profile", json=profile_body())
-    assert missing() == ["preferences", "photo"]
+    assert missing() == ["preferences"]
     client.put("/me/preferences", json={"interested_in": "everyone"})
-    assert missing() == ["photo"]
-    client.post("/me/photos", files={"file": ("a.jpg", jpeg(), "image/jpeg")})
     assert missing() == []
     assert client.get("/me").json()["status"] == "approved"
     actions = [e["action"] for e in env.s.live.audit_entries()]
@@ -327,13 +318,11 @@ def test_admin_endpoints_are_admins_only(env: Env) -> None:
     assert client.post("/admin/accounts/x/approve").status_code == 403
 
 
-def test_admin_queue_lists_pending_accounts_with_email_and_photos(env: Env) -> None:
+def test_admin_queue_lists_pending_accounts_with_email_and_profile(env: Env) -> None:
     client, _ = env.user("jane@bu.edu", approve=False)
     queue = env.admin().get("/admin/accounts", params={"status": "pending"}).json()
     assert [a["email"] for a in queue] == ["jane@bu.edu"]
     assert queue[0]["profile"]["name"] == "Sam"
-    assert len(queue[0]["photo_ids"]) == 1
-    assert env.admin().get(f"/photos/{queue[0]['photo_ids'][0]}").status_code == 200
 
 
 # Profiles and preferences
@@ -373,24 +362,82 @@ def test_preferences_accept_everyone_and_are_only_shown_to_their_owner(env: Env)
 # The eligible pool
 
 
-def test_mutual_gender_filter(env: Env) -> None:
+def test_live_pool_shows_everyone_whatever_their_gender_but_simulations_keep_the_filter(env: Env) -> None:
     man_for_women, man_id = env.user("m1@bu.edu", "man", ["woman"])
     woman_for_women, ww_id = env.user("w1@bu.edu", "woman", ["woman"])
-    woman_for_men, wm_id = env.user("w2@bu.edu", "woman", ["man"])
-    assert shown_ids(man_for_women) == [wm_id]
-    assert shown_ids(woman_for_women) == []
-    assert shown_ids(woman_for_men) == [man_id]
+    _, wm_id = env.user("w2@bu.edu", "woman", ["man"])
+    _, nb_id = env.user("n1@bu.edu", "nonbinary", ["nonbinary"])
+    assert sorted(env.s.manager.eligible_candidates(ww_id, "sim-run")) == []
+    assert env.s.manager.eligible_candidates(man_id, "sim-run") == [wm_id]
+    assert sorted(shown_ids(man_for_women)) == sorted([ww_id, wm_id, nb_id])
+    assert sorted(shown_ids(woman_for_women)) == sorted([man_id, wm_id, nb_id])
 
 
-def test_everyone_setting_sees_all_three_genders(env: Env) -> None:
+def test_humans_are_never_shown_agents(env: Env) -> None:
+    viewer, viewer_id = env.user("v@bu.edu", "man", "everyone")
+    agent = env.s.manager.add_profile({**profile_body("Agent", "woman"), "agent": True})
+    env.s.manager.set_preferences(agent.user_id, ["man"])
+    # Even an agent that somehow had an approved account stays out of the live pool.
+    with sqlite3.connect(env.settings.main_db) as conn:
+        conn.execute(
+            "INSERT INTO accounts (account_id, email_normalized, user_id, status, role, created_at) VALUES ('x', 'agent@x.org', ?, 'approved', 'user', '2026-01-01')",
+            (agent.user_id,),
+        )
+    assert agent.user_id not in env.s.manager.eligible_candidates(viewer_id, LIVE_RUN_ID)
+    assert shown_ids(viewer) == []
+
+
+def test_the_app_refuses_to_start_on_a_database_with_agents(env: Env, tmp_path: Path) -> None:
+    env.s.manager.add_profile({**profile_body("Agent", "woman"), "agent": True})
+    with pytest.raises(RuntimeError, match="simulated agents"):
+        create_app(env.settings, email_sender=ConsoleEmailSender(stream=None))
+    import paths
+
+    settings = Settings(main_db=paths.MAIN_DB, persona_db=tmp_path / "p.db")
+    with pytest.raises(RuntimeError, match="simulated-agent data"):
+        create_app(settings, email_sender=ConsoleEmailSender(stream=None))
+
+
+def test_asking_the_feed_again_shows_the_same_person_so_nobody_is_skipped(env: Env) -> None:
     viewer, _ = env.user("v@bu.edu", "man", "everyone")
-    others = {
-        env.user("a@bu.edu", "man", ["man"])[1],
-        env.user("b@bu.edu", "woman", ["man"])[1],
-        env.user("c@bu.edu", "nonbinary", "everyone")[1],
-    }
-    env.user("d@bu.edu", "woman", ["woman"])  # Not interested in men.
-    assert set(shown_ids(viewer)) == others
+    for i in range(3):
+        env.user(f"w{i}@bu.edu", "woman", "everyone")
+    first = viewer.get("/feed/next").json()
+    again = viewer.get("/feed/next").json()
+    assert first["impression_id"] == again["impression_id"]
+
+
+def test_someone_paused_while_on_screen_comes_back_later(env: Env) -> None:
+    viewer, _ = env.user("v@bu.edu", "man", "everyone")
+    others = {env.user(f"w{i}@bu.edu", "woman", "everyone")[1] for i in range(3)}
+    first = viewer.get("/feed/next").json()["profile"]["user_id"]
+    paused_account = env.s.live.account_for_user(first).account_id
+    env.s.live.set_flags(paused_account, paused=True)
+    rated = shown_ids(viewer)
+    assert first not in rated and len(rated) == 2
+    env.s.live.set_flags(paused_account, paused=False)
+    assert shown_ids(viewer) == [first]
+    assert set(rated) | {first} == others
+
+
+def test_nobody_can_rate_before_rating_opens(env: Env) -> None:
+    from datetime import timedelta
+
+    from app import actions
+    from live_store import utc_now
+
+    viewer, _ = env.user("v@bu.edu", "man", "everyone")
+    env.user("w@bu.edu", "woman", "everyone")
+    admin_account = env.s.live.account_for_email(ADMIN_EMAIL)
+    impression_id = viewer.get("/feed/next").json()["impression_id"]
+    actions.set_controls(env.s, admin_account, {"random": 1.0}, False, False, utc_now() + timedelta(days=1))
+    closed = viewer.get("/feed/next").json()
+    assert closed["profile"] is None and closed["message"].startswith("Rating opens on ")
+    refused = viewer.post("/ratings", json={"impression_id": impression_id, "score": 5})
+    assert refused.status_code == 403
+    actions.set_controls(env.s, admin_account, {"random": 1.0}, False, False, utc_now() - timedelta(minutes=1))
+    assert viewer.post("/ratings", json={"impression_id": impression_id, "score": 5}).status_code == 200
+    assert env.s.live.audit_entries()[-1]["action"] == "set_controls"
 
 
 def test_self_blocked_and_unapproved_users_never_appear(env: Env) -> None:
@@ -406,7 +453,7 @@ def test_self_blocked_and_unapproved_users_never_appear(env: Env) -> None:
     assert pending_id not in env.s.manager.eligible_candidates(viewer_id, LIVE_RUN_ID)
 
 
-def test_already_shown_or_rated_profiles_never_repeat(env: Env) -> None:
+def test_rated_profiles_never_repeat(env: Env) -> None:
     viewer, _ = env.user("v@bu.edu", "man", ["woman"])
     ids = {env.user(f"w{i}@bu.edu", "woman", ["man"])[1] for i in range(3)}
     seen = []
@@ -442,7 +489,7 @@ def test_feed_returns_only_public_data_and_records_the_impression(env: Env) -> N
     env.s.manager.add_persona(target_id, "SECRET_PERSONA_TEXT")
     response = viewer.get("/feed/next")
     body = response.json()
-    assert set(body) == {"impression_id", "profile", "photo_ids"}
+    assert set(body) == {"impression_id", "profile"}
     assert set(body["profile"]) == {"user_id", "name", "age", "height_cm", "religion", "school", "major", "job", "interests", "clubs", "gender", "looking_for"}
     text = response.text
     for secret in ("t@bu.edu", "interested_in", "SECRET_PERSONA_TEXT", "agent", "score"):
@@ -469,7 +516,7 @@ def test_registry_accepts_any_matcher_and_picks_with_a_seeded_rng(tmp_path: Path
 
     def chosen(seed: int) -> list[str]:
         folder = tmp_path / f"run{next(runs)}"
-        settings = Settings(site_url=SITE, admin_emails=(ADMIN_EMAIL,), main_db=folder / "m.db", persona_db=folder / "p.db", photo_dir=folder / "ph", cookie_secure=False, enabled_matchers=("random", "first"))
+        settings = Settings(site_url=SITE, admin_emails=(ADMIN_EMAIL,), main_db=folder / "m.db", persona_db=folder / "p.db", cookie_secure=False, enabled_matchers=("random", "first"))
         sender = ConsoleEmailSender(stream=None)
         env = Env(create_app(settings, email_sender=sender, rng=random.Random(seed)), settings, sender)
         viewer, _ = env.user("v@bu.edu", "man", ["woman"])
@@ -479,6 +526,7 @@ def test_registry_accepts_any_matcher_and_picks_with_a_seeded_rng(tmp_path: Path
         for _ in range(8):
             feed = viewer.get("/feed/next").json()
             names.append(env.s.live.get_impression(feed["impression_id"]).matcher)
+            viewer.post("/ratings", json={"impression_id": feed["impression_id"], "score": 1})
         return names
 
     assert chosen(3) == chosen(3)
@@ -486,7 +534,7 @@ def test_registry_accepts_any_matcher_and_picks_with_a_seeded_rng(tmp_path: Path
 
 
 def test_unknown_matcher_names_are_refused(tmp_path: Path) -> None:
-    settings = Settings(main_db=tmp_path / "m.db", persona_db=tmp_path / "p.db", photo_dir=tmp_path / "ph", enabled_matchers=("elo",))
+    settings = Settings(main_db=tmp_path / "m.db", persona_db=tmp_path / "p.db", enabled_matchers=("elo",))
     with pytest.raises(ValueError, match="ENABLED_MATCHERS"):
         create_app(settings, email_sender=ConsoleEmailSender(stream=None))
 
@@ -500,7 +548,7 @@ class OutsidePoolMatcher(RandomMatcher):
 
 def test_a_pick_outside_the_pool_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(matcher_registry.REGISTRY, "rogue", OutsidePoolMatcher)
-    settings = Settings(site_url=SITE, admin_emails=(ADMIN_EMAIL,), main_db=tmp_path / "m.db", persona_db=tmp_path / "p.db", photo_dir=tmp_path / "ph", cookie_secure=False, enabled_matchers=("rogue",))
+    settings = Settings(site_url=SITE, admin_emails=(ADMIN_EMAIL,), main_db=tmp_path / "m.db", persona_db=tmp_path / "p.db", cookie_secure=False, enabled_matchers=("rogue",))
     sender = ConsoleEmailSender(stream=None)
     env = Env(create_app(settings, email_sender=sender), settings, sender)
     viewer, _ = env.user("v@bu.edu", "man", ["woman"])
@@ -511,8 +559,9 @@ def test_a_pick_outside_the_pool_is_refused(tmp_path: Path, monkeypatch: pytest.
 def test_ratings_need_your_own_unrated_impression(env: Env) -> None:
     viewer, viewer_id = env.user("v@bu.edu", "man", ["woman"])
     other, _ = env.user("o@bu.edu", "man", ["woman"])
-    _, target_id = env.user("t@bu.edu", "woman", ["man"])
+    env.user("t@bu.edu", "woman", ["man"])
     feed = viewer.get("/feed/next").json()
+    target_id = feed["profile"]["user_id"]
     assert other.post("/ratings", json={"impression_id": feed["impression_id"], "score": 5}).status_code == 404
     assert viewer.post("/ratings", json={"impression_id": "made-up", "score": 5}).status_code == 404
     assert viewer.post("/ratings", json={"impression_id": feed["impression_id"], "score": 5}).status_code == 200
@@ -577,7 +626,7 @@ def test_no_match_if_a_block_exists(env: Env) -> None:
     assert response["matched"] is False
 
 
-# Matches, chat, and safety
+# Matches and safety
 
 
 def matched_pair(env: Env) -> tuple[TestClient, str, TestClient, str, str]:
@@ -593,170 +642,58 @@ def test_matches_show_the_other_persons_public_profile(env: Env) -> None:
     (match,) = a.get("/matches").json()
     assert match["profile"]["user_id"] == b_id
     assert match["profile"]["name"] == "Bea"
-    assert len(match["photo_ids"]) == 1
-    assert a.get(f"/photos/{match['photo_ids'][0]}").status_code == 200
 
 
-def test_chat_is_only_for_participants_of_an_active_match(env: Env) -> None:
+def test_unmatch_removes_the_match_for_both(env: Env) -> None:
     a, _, b, _, match_id = matched_pair(env)
     outsider, _ = env.user("c@bu.edu", "man", ["woman"])
-    assert a.post(f"/matches/{match_id}/messages", json={"body": "hi"}).status_code == 201
-    reply = b.post(f"/matches/{match_id}/messages", json={"body": "hello"}).json()
-    assert [m["body"] for m in b.get(f"/matches/{match_id}/messages").json()] == ["hi", "hello"]
-    assert a.get(f"/matches/{match_id}/messages", params={"after": reply["message_id"] - 1}).json()[0]["body"] == "hello"
-    assert outsider.get(f"/matches/{match_id}/messages").status_code == 404
-    assert outsider.post(f"/matches/{match_id}/messages", json={"body": "x"}).status_code == 404
-
-
-@pytest.mark.parametrize("body", ["", "   ", "x" * 2001])
-def test_message_length_is_enforced(env: Env, body: str) -> None:
-    a, _, _, _, match_id = matched_pair(env)
-    assert a.post(f"/matches/{match_id}/messages", json={"body": body}).status_code == 422
-
-
-def test_unmatch_stops_messaging(env: Env) -> None:
-    a, _, b, _, match_id = matched_pair(env)
+    assert outsider.post(f"/matches/{match_id}/unmatch").status_code == 404
     assert b.post(f"/matches/{match_id}/unmatch").status_code == 200
-    assert a.post(f"/matches/{match_id}/messages", json={"body": "hi"}).status_code == 403
-    assert a.get(f"/matches/{match_id}/messages").status_code == 403
     assert a.get("/matches").json() == []
     assert b.post(f"/matches/{match_id}/unmatch").status_code == 409
 
 
-def test_block_ends_the_match_and_stops_messaging(env: Env) -> None:
+def test_block_ends_the_match(env: Env) -> None:
     a, a_id, b, b_id, match_id = matched_pair(env)
     assert b.post("/blocks", json={"user_id": a_id}).status_code == 201
     assert env.s.live.get_match(match_id).status == "unmatched"
-    assert a.post(f"/matches/{match_id}/messages", json={"body": "hi"}).status_code == 403
+    assert a.get("/matches").json() == []
     assert b.get("/blocks").json()[0]["user_id"] == a_id
     assert b.delete(f"/blocks/{a_id}").status_code == 200
     assert b.delete(f"/blocks/{a_id}").status_code == 404
     assert b.post("/blocks", json={"user_id": b_id}).status_code == 400
 
 
-def test_message_rate_limit(env: Env) -> None:
-    a, _, _, _, match_id = matched_pair(env)
-    codes = [a.post(f"/matches/{match_id}/messages", json={"body": str(i)}).status_code for i in range(env.settings.messages_per_minute + 1)]
-    assert codes[-1] == 429
-    assert codes[:-1] == [201] * env.settings.messages_per_minute
-
-
-def test_reports_check_the_match_and_only_admins_read_messages_with_audit(env: Env) -> None:
+def test_reports_check_the_match_and_admins_resolve_them(env: Env) -> None:
     a, a_id, b, b_id, match_id = matched_pair(env)
     _, c_id = env.user("c@bu.edu", "man", ["woman"])
-    a.post(f"/matches/{match_id}/messages", json={"body": "PRIVATE MESSAGE"})
     assert b.post("/reports", json={"reported_id": c_id, "match_id": match_id, "reason": "spam"}).status_code == 400
     assert b.post("/reports", json={"reported_id": a_id, "reason": "rude"}).status_code == 422
     assert b.post("/reports", json={"reported_id": a_id, "reason": "other", "details": "x" * 1001}).status_code == 422
     report_id = b.post("/reports", json={"reported_id": a_id, "match_id": match_id, "reason": "harassment", "details": "rude"}).json()["report_id"]
 
     admin = env.admin()
-    reports = admin.get("/admin/reports")
-    assert "PRIVATE MESSAGE" not in reports.text
-    assert b.get(f"/admin/reports/{report_id}/messages").status_code == 403
-    before = len([e for e in env.s.live.audit_entries() if e["action"] == "read_report_messages"])
-    messages = admin.get(f"/admin/reports/{report_id}/messages").json()
-    assert [m["body"] for m in messages] == ["PRIVATE MESSAGE"]
-    reads = [e for e in env.s.live.audit_entries() if e["action"] == "read_report_messages"]
-    assert len(reads) == before + 1
-    assert reads[-1]["target"] == report_id
+    assert [r["report_id"] for r in admin.get("/admin/reports").json()] == [report_id]
+    assert b.post(f"/admin/reports/{report_id}/resolve").status_code == 403
     assert admin.post(f"/admin/reports/{report_id}/resolve").json()["status"] == "resolved"
     assert admin.get("/admin/reports").json() == []
-
-
-# Photos
-
-
-def test_photos_are_reencoded_without_exif_and_stored_under_random_names(env: Env) -> None:
-    client, user_id = env.user("jane@bu.edu")
-    original = jpeg("blue", (2400, 1200), exif=True)
-    assert Image.open(io.BytesIO(original)).getexif().get_ifd(0x8825)  # The test file has GPS.
-    upload = client.post("/me/photos", files={"file": ("jane_holiday.jpg", original, "image/jpeg")})
-    assert upload.status_code == 201
-    photo = env.s.live.get_photo(upload.json()["photo_id"])
-    assert re.fullmatch(r"[0-9a-f]{32}\.jpg", photo.storage_key)
-    assert user_id not in photo.storage_key
-    served = client.get(f"/photos/{photo.photo_id}")
-    assert served.headers["cache-control"] == "private"
-    assert served.headers["content-type"] == "image/jpeg"
-    image = Image.open(io.BytesIO(served.content))
-    assert dict(image.getexif()) == {}
-    assert max(image.size) == 1600
-    assert b"SECRETCAMERA" not in served.content
-    on_disk = (env.settings.photo_dir / photo.storage_key).read_bytes()
-    assert b"SECRETCAMERA" not in on_disk
-
-
-@pytest.mark.parametrize(
-    ("content", "status"),
-    [(b"not an image at all", 415), (b"GIF89a" + b"\x00" * 50, 415), (b"\x89PNG\r\n\x1a\nbroken", 415)],
-)
-def test_non_images_are_rejected(env: Env, content: bytes, status: int) -> None:
-    client, _ = env.user("jane@bu.edu")
-    response = client.post("/me/photos", files={"file": ("x.jpg", content, "image/jpeg")})
-    assert response.status_code == status
-    assert len(client.get("/me").json()["photo_ids"]) == 1
-
-
-def test_oversized_uploads_and_too_many_photos_are_rejected(env: Env) -> None:
-    client, _ = env.user("jane@bu.edu")
-    big = b"\xff\xd8" + b"\x00" * MAX_PHOTO_BYTES
-    assert client.post("/me/photos", files={"file": ("big.jpg", big, "image/jpeg")}).status_code == 413
-    for _ in range(4):
-        assert client.post("/me/photos", files={"file": ("a.jpg", jpeg(), "image/jpeg")}).status_code == 201
-    assert client.post("/me/photos", files={"file": ("a.jpg", jpeg(), "image/jpeg")}).status_code == 409
-    assert len(list(env.settings.photo_dir.iterdir())) == 5
-
-
-def test_photos_can_be_reordered_and_deleted(env: Env) -> None:
-    client, _ = env.user("jane@bu.edu")
-    client.post("/me/photos", files={"file": ("a.jpg", jpeg("green"), "image/jpeg")})
-    first, second = client.get("/me").json()["photo_ids"]
-    assert client.put("/me/photos", json={"photo_ids": [second, first]}).status_code == 200
-    assert client.get("/me").json()["photo_ids"] == [second, first]
-    assert client.put("/me/photos", json={"photo_ids": [second]}).status_code == 400
-    key = env.s.live.get_photo(second).storage_key
-    assert client.delete(f"/me/photos/{second}").json()["photo_ids"] == [first]
-    assert not (env.settings.photo_dir / key).exists()
-    other, _ = env.user("o@bu.edu")
-    assert other.delete(f"/me/photos/{first}").status_code == 404
-
-
-def test_photo_route_denies_users_who_may_not_see_the_owner(env: Env) -> None:
-    owner, owner_id = env.user("w@bu.edu", "woman", ["man"])
-    photo_id = owner.get("/me").json()["photo_ids"][0]
-    viewer, _ = env.user("m@bu.edu", "man", ["woman"])
-    stranger, _ = env.user("x@bu.edu", "woman", ["woman"])
-    unapproved, _ = env.user("p@bu.edu", "man", ["woman"], approve=False)
-    assert viewer.get(f"/photos/{photo_id}").status_code == 200  # In their pool.
-    assert stranger.get(f"/photos/{photo_id}").status_code == 404
-    assert unapproved.get(f"/photos/{photo_id}").status_code == 404
-    assert env.client().get(f"/photos/{photo_id}").status_code == 401
-    viewer.get("/feed/next")
-    assert viewer.get(f"/photos/{photo_id}").status_code == 200  # Shown, so out of the pool now.
-    owner.post("/blocks", json={"user_id": viewer.get("/me").json()["profile"]["user_id"]})
-    assert viewer.get(f"/photos/{photo_id}").status_code == 404
 
 
 # Deletion, privacy, and request safety
 
 
-def test_deleting_an_account_removes_everything_including_photo_files(env: Env) -> None:
+def test_deleting_an_account_removes_everything(env: Env) -> None:
     a, a_id, b, b_id, match_id = matched_pair(env)
-    a.post(f"/matches/{match_id}/messages", json={"body": "hello"})
     a.post("/reports", json={"reported_id": b_id, "match_id": match_id, "reason": "spam"})
     b.post("/reports", json={"reported_id": a_id, "match_id": match_id, "reason": "fake"})
     _, c_id = env.user("c@bu.edu", "woman", ["man"])
     a.post("/blocks", json={"user_id": c_id})
     a_account = env.account_id(a)
     env.admin().get(f"/admin/reports")
-    keys = [p.storage_key for p in env.s.live.photos_for(a_id)]
-    assert all((env.settings.photo_dir / k).exists() for k in keys)
 
     assert a.delete("/me").status_code == 200
 
     assert a.get("/me").status_code == 401
-    assert not any((env.settings.photo_dir / k).exists() for k in keys)
     with sqlite3.connect(env.settings.main_db) as conn:
         def count(sql: str, *args: str) -> int:
             return conn.execute(sql, args).fetchone()[0]
@@ -767,12 +704,10 @@ def test_deleting_an_account_removes_everything_including_photo_files(env: Env) 
         assert count("SELECT COUNT(*) FROM ratings WHERE rater_id = ? OR target_id = ?", a_id, a_id) == 0
         assert count("SELECT COUNT(*) FROM impressions WHERE viewer_id = ? OR target_id = ?", a_id, a_id) == 0
         assert count("SELECT COUNT(*) FROM matches WHERE user_a = ? OR user_b = ?", a_id, a_id) == 0
-        assert count("SELECT COUNT(*) FROM messages WHERE sender_id = ?", a_id) == 0
         assert count("SELECT COUNT(*) FROM blocks WHERE blocker_id = ? OR blocked_id = ?", a_id, a_id) == 0
         assert count("SELECT COUNT(*) FROM reports WHERE reporter_id = ?", a_id) == 0
         assert count("SELECT COUNT(*) FROM sessions WHERE account_id = ?", a_account) == 0
         assert count("SELECT COUNT(*) FROM login_tokens WHERE email_normalized = 'a@bu.edu'") == 0
-        assert count("SELECT COUNT(*) FROM photos WHERE user_id = ?", a_id) == 0
         # The report about them is kept as a safety record, with them removed from it.
         assert count("SELECT COUNT(*) FROM reports WHERE reporter_id = ? AND reported_id IS NULL", b_id) == 1
         dump = "\n".join(conn.iterdump())
@@ -802,11 +737,9 @@ def test_no_response_leaks_emails_preferences_or_personas(env: Env) -> None:
     viewer, _ = env.user("v@bu.edu", "man", ["woman"])
     for user_id in (a_id, b_id):
         env.s.manager.add_persona(user_id, f"SECRET_PERSONA_{user_id}")
-    a.post(f"/matches/{match_id}/messages", json={"body": "hi"})
-    report_id = a.post("/reports", json={"reported_id": b_id, "match_id": match_id, "reason": "spam"}).json()["report_id"]
+    a.post("/reports", json={"reported_id": b_id, "match_id": match_id, "reason": "spam"})
     responses = [
         a.get("/matches"),
-        a.get(f"/matches/{match_id}/messages"),
         a.get("/blocks"),
         a.get("/me/profile"),
     ]
@@ -816,7 +749,6 @@ def test_no_response_leaks_emails_preferences_or_personas(env: Env) -> None:
         feed,
         viewer.get("/matches"),
         env.admin().get("/admin/reports"),
-        env.admin().get(f"/admin/reports/{report_id}/messages"),
         a.get("/auth/consent"),
     ]
     for response in responses:
@@ -834,11 +766,11 @@ def test_state_changing_requests_need_a_matching_origin(env: Env) -> None:
     cookies = dict(client.cookies)
     for headers in ({"Origin": "https://evil.example"}, {"Referer": "https://evil.example/page"}, {}):
         hostile = TestClient(env.app, headers=headers, cookies=cookies)
-        assert hostile.post("/auth/consent", json={"version": "1"}).status_code == 403
+        assert hostile.post("/auth/consent", json={"version": "2"}).status_code == 403
         assert hostile.delete("/me").status_code == 403
     assert client.get("/me").status_code == 200  # Not deleted.
     referer_only = TestClient(env.app, headers={"Referer": f"{SITE}/settings"}, cookies=cookies)
-    assert referer_only.post("/auth/consent", json={"version": "1"}).status_code == 200
+    assert referer_only.post("/auth/consent", json={"version": "2"}).status_code == 200
 
 
 def test_security_headers_are_on_every_response(env: Env) -> None:
@@ -857,3 +789,18 @@ def test_tokens_are_redacted_from_access_logs() -> None:
     RedactTokens().filter(record)
     assert "abc123" not in record.getMessage()
     assert "token=[redacted]" in record.getMessage()
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("get", "/matches/x/messages"),
+        ("post", "/matches/x/messages"),
+        ("post", "/me/photos"),
+        ("get", "/photos/x"),
+        ("get", "/admin/reports/x/messages"),
+    ],
+)
+def test_photo_and_message_routes_are_gone(env: Env, method: str, path: str) -> None:
+    client, _ = env.user("jane@bu.edu")
+    assert getattr(client, method)(path).status_code in (404, 405)

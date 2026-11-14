@@ -20,7 +20,7 @@ from live_store import to_text, utc_now
 from matching import Matcher, PublicView
 from models import LIVE_RUN_ID
 from raters import build_rater_input
-from test_api import ADMIN_EMAIL, SITE, Env, jpeg, profile_body
+from test_api import ADMIN_EMAIL, SITE, Env, profile_body
 
 HTML = {"Accept": "text/html"}
 
@@ -31,7 +31,6 @@ def make_env(tmp_path: Path, **overrides: Any) -> Env:
         admin_emails=(ADMIN_EMAIL,),
         main_db=tmp_path / "main.db",
         persona_db=tmp_path / "personas.db",
-        photo_dir=tmp_path / "photos",
         cookie_secure=False,
         login_requests_per_email=50,
         login_requests_per_ip=10_000,
@@ -88,8 +87,8 @@ def test_onboarding_order_and_pending_lock(env: Env) -> None:
     for path in ("/discover", "/matches", "/me", "/onboarding/profile"):
         assert browser.get(path).headers["location"] == "/onboarding/consent"
     csrf = csrf_of(browser.get("/onboarding/consent").text)
-    assert browser.post("/onboarding/consent", data={"csrf_token": csrf, "version": "1"}).status_code == 422
-    assert browser.post("/onboarding/consent", data={"csrf_token": csrf, "version": "1", "agree": "yes"}).headers["location"] == "/onboarding/profile"
+    assert browser.post("/onboarding/consent", data={"csrf_token": csrf, "version": "2"}).status_code == 422
+    assert browser.post("/onboarding/consent", data={"csrf_token": csrf, "version": "2", "agree": "yes"}).headers["location"] == "/onboarding/profile"
     assert browser.get("/discover").headers["location"] == "/onboarding/profile"
     form = {**{k: v for k, v in profile_body("Jane Doe", "woman").items() if not isinstance(v, list)},
             "interests": "Hiking,  chess", "clubs": "", "csrf_token": csrf, "religion": "  "}
@@ -100,8 +99,6 @@ def test_onboarding_order_and_pending_lock(env: Env) -> None:
     assert me["religion"] is None
     assert browser.get("/discover").headers["location"] == "/onboarding/preferences"
     browser.post("/onboarding/preferences", data={"csrf_token": csrf, "interested_in": "everyone"})
-    assert browser.get("/discover").headers["location"] == "/onboarding/photos"
-    browser.post("/onboarding/photos", data={"csrf_token": csrf}, files={"file": ("a.jpg", jpeg(), "image/jpeg")})
     assert browser.get("/discover").headers["location"] == "/pending"
     pending = browser.get("/pending")
     assert "Your profile is under review." in pending.text
@@ -243,15 +240,16 @@ def test_session_survey_after_every_25th_rating(env: Env) -> None:
 def test_post_match_survey_only_after_three_days_and_once(env: Env) -> None:
     a, a_id = member(env, "a@bu.edu")
     _, b_id = member(env, "b@bu.edu", "woman", ("man",))
-    match = env.s.live.create_match(a_id, b_id)
-    assert "Was this match worth your time?" not in a.get(f"/matches/{match.match_id}").text
+    env.s.live.create_match(a_id, b_id)
+    question = "Was your match with Sam worth your time?"
+    assert question not in a.get("/matches").text
     with sqlite3.connect(env.settings.main_db) as conn:
         conn.execute("UPDATE matches SET created_at = ?", (to_text(utc_now().replace(year=2000)),))
-    assert "Was this match worth your time?" in a.get(f"/matches/{match.match_id}").text
-    assert "Was this match worth your time?" not in a.get(f"/matches/{match.match_id}").text
+    assert question in a.get("/matches").text
+    assert question not in a.get("/matches").text
 
 
-# Matches, chat, names, and religion
+# Matches, names, and religion
 
 
 def matched(env: Env) -> tuple[TestClient, str, TestClient, str, str]:
@@ -266,26 +264,16 @@ def matched(env: Env) -> tuple[TestClient, str, TestClient, str, str]:
 
 def test_first_names_only_and_religion_only_when_given(env: Env) -> None:
     a, a_id, b, b_id, match_id = matched(env)
-    env.s.manager.edit_profile(b_id, religion=None)
-    for html in (a.get("/matches").text, a.get(f"/matches/{match_id}").text):
-        assert "Bea" in html and "Jones" not in html
-    c, _ = member(env, "c@bu.edu")
+    html = a.get("/matches").text
+    assert "Bea" in html and "Jones" not in html
+    for user_id in (a_id, b_id):
+        env.s.manager.edit_profile(user_id, religion=None)
+    c, c_id = member(env, "c@bu.edu")
     html = c.get("/discover").text
     assert "Religion" not in html
-    env.s.manager.edit_profile(b_id, religion="buddhist")
-    d, _ = member(env, "d@bu.edu")
-    assert "buddhist" in d.get("/discover").text
-
-
-def test_chat_polls_every_5_seconds_and_sends_with_htmx(env: Env) -> None:
-    a, _, b, _, match_id = matched(env)
-    html = a.get(f"/matches/{match_id}").text
-    assert 'hx-trigger="every 5s"' in html and 'maxlength="2000"' in html
-    sent = a.post(f"/matches/{match_id}/send", data={"body": "<b>hi</b>"}, headers=htmx(a, html))
-    assert "&lt;b&gt;hi&lt;/b&gt;" in sent.text
-    assert "&lt;b&gt;hi&lt;/b&gt;" in b.get(f"/matches/{match_id}/log", headers={"HX-Request": "true"}).text
-    for word in ("read", "seen", "typing", "online"):
-        assert f">{word}" not in html.lower()
+    shown = impression_of(env, c_id).target_id
+    env.s.manager.edit_profile(shown, religion="buddhist")
+    assert "buddhist" in c.get("/discover").text  # The same card again, now with religion.
 
 
 def test_match_email_once_per_participant_with_no_names(env: Env) -> None:
@@ -299,7 +287,7 @@ def test_match_email_once_per_participant_with_no_names(env: Env) -> None:
     new = env.sender.outbox[before:]
     assert [m["to"] for m in new] == ["a@bu.edu"]
     assert new[0]["subject"] == "You have a new match"
-    for secret in ("Alex", "Bea", "Smith", "Jones", "/photos/"):
+    for secret in ("Alex", "Bea", "Smith", "Jones"):
         assert secret not in new[0]["body"]
     assert {m["subject"] for m in env.sender.outbox} <= {"Your sign-in link", "You have a new match"}
 
@@ -337,17 +325,13 @@ def test_paused_users_leave_pools_and_can_unpause(env: Env) -> None:
 
 def test_download_my_data_is_only_the_callers(env: Env) -> None:
     a, a_id, b, b_id, match_id = matched(env)
-    html = a.get(f"/matches/{match_id}").text
-    a.post(f"/matches/{match_id}/send", data={"body": "from a"}, headers=htmx(a, html))
-    html = b.get(f"/matches/{match_id}").text
-    b.post(f"/matches/{match_id}/send", data={"body": "from b"}, headers=htmx(b, html))
     data = a.get("/me/data.json").json()
     assert data["account"]["email"] == "a@bu.edu"
     assert data["profile"]["name"] == "Alex Smith"
-    assert [m["body"] for m in data["messages_sent"]] == ["from a"]
+    assert "messages_sent" not in data
     assert [r["target_id"] for r in data["ratings"]] == [b_id]
     text = json.dumps(data)
-    assert "b@bu.edu" not in text and "Bea" not in text and "from b" not in text
+    assert "b@bu.edu" not in text and "Bea" not in text
 
 
 def test_delete_my_account_from_the_page_cascades(env: Env) -> None:
@@ -384,30 +368,26 @@ def test_stale_admin_sign_in_must_step_up(env: Env) -> None:
     assert admin.post("/admin/step-up", data={"csrf_token": csrf_of(html)}).headers["location"] == "/login/sent"
 
 
-def test_viewing_a_reported_conversation_needs_confirmation_and_is_audited(env: Env) -> None:
+def test_reports_show_no_conversation_and_admin_routes_list_no_ratings(env: Env) -> None:
     a, a_id, b, b_id, match_id = matched(env)
-    html = a.get(f"/matches/{match_id}").text
-    a.post(f"/matches/{match_id}/send", data={"body": "PRIVATE"}, headers=htmx(a, html))
     form = b.get(f"/people/{a_id}/report?match_id={match_id}").text
     b.post(f"/people/{a_id}/report", data={"csrf_token": csrf_of(form), "reason": "harassment", "details": "rude", "match_id": match_id})
     report_id = env.s.live.list_reports("open")[0].report_id
     admin = admin_page(env)
-    listing = admin.get("/admin/reports").text
-    assert "PRIVATE" not in listing
-    confirm = admin.get(f"/admin/reports/{report_id}/conversation").text
-    assert "PRIVATE" not in confirm and "will be logged" in confirm
-    before = [e for e in env.s.live.audit_entries() if e["action"] == "read_report_messages"]
-    shown = admin.post(f"/admin/reports/{report_id}/conversation", data={"csrf_token": csrf_of(confirm)})
-    assert "PRIVATE" in shown.text
-    assert len([e for e in env.s.live.audit_entries() if e["action"] == "read_report_messages"]) == len(before) + 1
-
-
-def test_no_admin_route_lists_messages_or_ratings(env: Env) -> None:
-    admin_paths = sorted({getattr(r, "path", "") for r in env.app.router.routes if "admin" in getattr(r, "path", "")})
+    assert "rude" in admin.get("/admin/reports").text
+    assert admin.get(f"/admin/reports/{report_id}/conversation").status_code == 404
+    admin_paths = {getattr(r, "path", "") for r in env.app.router.routes if "admin" in getattr(r, "path", "")}
     for path in admin_paths:
-        assert "message" not in path or path.endswith("/reports/{report_id}/messages"), path
-        assert "rating" not in path, path
-        assert "conversation" not in path or "{report_id}" in path, path
+        for word in ("message", "conversation", "rating", "photo"):
+            assert word not in path, path
+
+
+def test_no_page_mentions_photos_or_chat(env: Env) -> None:
+    a, *_ = matched(env)
+    for path in ("/discover", "/matches", "/me", "/transparency"):
+        html = a.get(path).text.lower()
+        for word in ("photo", "chat", "/send", "messages"):
+            assert word not in html, (path, word)
 
 
 def test_admin_pages_render_and_controls_are_audited(env: Env) -> None:
@@ -432,7 +412,7 @@ def test_export_is_pseudonymized_stable_and_audited(env: Env) -> None:
     rows = list(csv.DictReader(io.StringIO(first.text)))
     assert len(rows) == 2
     text = first.text + admin.get("/admin/export.json").text
-    for secret in ("@bu.edu", "Alex", "Bea", a_id, b_id, "hiking", "religion", "/photos/"):
+    for secret in ("@bu.edu", "Alex", "Bea", a_id, b_id, "hiking", "religion"):
         assert secret not in text, secret
     assert all(r["viewer_age_band"] == "21-23" for r in rows)
     assert {r["produced_match"] for r in rows} == {"True"}
@@ -478,3 +458,19 @@ def test_religion_none_is_left_out_of_rater_input(env: Env) -> None:
     assert "religion" not in rater_input["rater_profile"]
     assert rater_input["target_profile"]["religion"] == "catholic"
     assert rater_input["rater_profile"]["gender"] == "man"
+
+
+def test_admin_sets_when_rating_opens_and_discover_waits_for_it(env: Env) -> None:
+    browser, _ = member(env, "v@bu.edu")
+    member(env, "w@bu.edu", "woman", ("man",))
+    admin = admin_page(env)
+    html = admin.get("/admin/controls").text
+    form = {"csrf_token": csrf_of(html), "enabled_random": "yes", "weight_random": "1", "rating_opens_at": "2999-01-04T09:30"}
+    assert admin.post("/admin/controls", data=form).status_code == 303
+    assert "January 4 at 9:30 AM" in admin.get("/admin/controls").text
+    page_html = browser.get("/discover").text
+    assert "Rating opens on " in page_html and "January 4 at 9:30 AM" in page_html
+    assert 'name="score"' not in page_html
+    assert admin.post("/admin/controls", data={**form, "rating_opens_at": "not a date"}).status_code == 422
+    assert admin.post("/admin/controls", data={**form, "rating_opens_at": ""}).status_code == 303
+    assert 'name="score"' in browser.get("/discover").text

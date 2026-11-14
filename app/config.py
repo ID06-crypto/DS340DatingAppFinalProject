@@ -27,15 +27,15 @@ def _list(name: str, default: str) -> tuple[str, ...]:
 @dataclass(frozen=True)
 class Settings:
     site_url: str = "http://localhost:8000"
-    allowed_email_domains: tuple[str, ...] = ("bu.edu",)
+    allowed_email_domains: tuple[str, ...] = ()  # Empty means any domain.
     admin_emails: tuple[str, ...] = ()
     main_db: Path = LIVE_DIR / "main.db"
     persona_db: Path = LIVE_DIR / "personas.db"
-    photo_dir: Path = LIVE_DIR / "photos"
     consent_dir: Path = ROOT / "consent"
-    consent_version: str = "1"
-    require_photo: bool = True
+    consent_version: str = "2"
     match_threshold: float = 7.0
+    # Times admins enter, like when rating opens, are read and shown in this time zone.
+    study_timezone: str = "America/New_York"
     cookie_secure: bool = True
     session_days: int = 14
     login_token_minutes: int = 15
@@ -61,22 +61,20 @@ class Settings:
     login_requests_per_email: int = 3
     login_requests_per_ip: int = 20
     login_window_seconds: int = 900
-    messages_per_minute: int = 30
 
     @classmethod
     def from_env(cls) -> "Settings":
         seed = os.environ.get("MATCHER_SEED")
         return cls(
             site_url=os.environ.get("SITE_URL", cls.site_url).rstrip("/"),
-            allowed_email_domains=_list("ALLOWED_EMAIL_DOMAINS", "bu.edu"),
+            allowed_email_domains=_list("ALLOWED_EMAIL_DOMAINS", ""),
             admin_emails=_list("ADMIN_EMAILS", ""),
             main_db=Path(os.environ.get("APP_MAIN_DB", cls.main_db)),
             persona_db=Path(os.environ.get("APP_PERSONA_DB", cls.persona_db)),
-            photo_dir=Path(os.environ.get("PHOTO_DIR", cls.photo_dir)),
             consent_dir=Path(os.environ.get("CONSENT_DIR", cls.consent_dir)),
             consent_version=os.environ.get("CONSENT_VERSION", cls.consent_version),
-            require_photo=_bool("REQUIRE_PHOTO", True),
             match_threshold=float(os.environ.get("MATCH_THRESHOLD", cls.match_threshold)),
+            study_timezone=os.environ.get("STUDY_TIMEZONE", cls.study_timezone),
             cookie_secure=_bool("COOKIE_SECURE", True),
             session_days=int(os.environ.get("SESSION_DAYS", cls.session_days)),
             login_token_minutes=int(os.environ.get("LOGIN_TOKEN_MINUTES", cls.login_token_minutes)),

@@ -21,3 +21,6 @@ data/*.log
 
 # The live app: real people's data and photos
 data/live/
+
+# Read-only snapshots of agent data
+archive/

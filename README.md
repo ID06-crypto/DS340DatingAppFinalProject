@@ -8,9 +8,9 @@ It also includes a JSON backend for the live study with about 100 invited BU stu
 | --- | --- |
 | `models.py` | Pydantic models: `Profile`, `Preferences`, `Rating`, `Persona`, `RatingTranscript`, `Run` |
 | `store.py` | Profiles, private preferences, ratings, runs, and the eligible pool, in `main.db` |
-| `live_schema.py`, `live_store.py` | The live app's tables in `main.db`: accounts, sessions, matches, messages, blocks, reports, photos, impressions, and the audit log |
+| `live_schema.py`, `live_store.py` | The live app's tables in `main.db`: accounts, sessions, matches, blocks, reports, impressions, surveys, and the audit log |
 | `app/` | The FastAPI backend for the live app |
-| `consent/v1.md` | The consent text users agree to, by version |
+| `consent/v1.md`, `consent/v2.md` | The consent text users agree to, by version. v2 is current. |
 | `scripts/seed_dev.py` | Creates a few fake approved accounts for local testing |
 | `scripts/migrate_schema.py` | Upgrades databases made before preferences moved off profiles |
 | `personas.py` | Hidden data, in `personas.db`: personas and rating transcripts |
@@ -248,7 +248,7 @@ Invalid data raises `pydantic.ValidationError`, and an unknown user raises `stor
 
 - **Re-rating:** a rating replaces an earlier one with the same rater, target, and run, including its transcript. If `raw_output` and `input_snapshot` aren't passed again, the old transcript is deleted.
 - **The `agent` flag:** matchers and raters aren't shown it. `PublicView` returns each profile as a `PublicProfile`, which doesn't have the field. Because matchers can't see it, they also can't avoid real people's profiles, so keep agents and real people in separate databases.
-- **The eligible pool:** matchers must choose from `view.eligible_candidates(user_id)`. It contains only people with mutual gender interest and approved accounts, excluding the user themselves, anyone blocked in either direction, active matches, and anyone already rated in this run. In the live app, it also excludes anyone already shown. Simulated users have no account, and count as approved in simulations. If a matcher picks outside the pool, the simulation counts that step as a failure, and the app refuses the pick.
+- **The eligible pool:** matchers must choose from `view.eligible_candidates(user_id)`. It excludes the user themselves, anyone blocked in either direction, active matches, and anyone already rated in this run. In simulations it also requires mutual gender interest, and simulated users have no account, so they count as approved. In the live app there's no gender filter, so every participant rates every other participant; preferences are only recorded. It also requires an approved, unpaused account, never includes an agent, and leaves out anyone already shown. If a matcher picks outside the pool, the simulation counts that step as a failure, and the app refuses the pick.
 - **Preferences are private:** they decide the pool but never appear in a profile or a `PublicView`. `CompatibleRandomMatcher` is now the same as `RandomMatcher`, and is kept so older runs can still be resumed and compared.
 - **Mutual pairs across runs:** with `run_id=None`, both scores must still come from the same run. A pair that qualifies in several runs appears once per run, and each result has a `run_id`.
 - **Seeded IDs:** IDs repeat only if the seed and the order of `add_profile` calls both match. A failed validation also uses up an ID, and running the same seed against an existing database raises `DuplicateProfileError`.
@@ -321,7 +321,7 @@ To rebuild the original 10,000 users, delete the root `main.db*` and `personas.d
 
 ## The live app
 
-A FastAPI app for the study, with server-rendered pages and a JSON API that share the same rules in `app/actions.py`. It handles magic-link sign-in with BU emails, onboarding and an admin approval queue, Discover (one person at a time), matches and chat, blocks and reports, account settings, and admin analytics.
+A FastAPI app for the study, with server-rendered pages and a JSON API that share the same rules in `app/actions.py`. It handles magic-link sign-in by email, onboarding and an admin approval queue, Discover (one person at a time), matches, blocks and reports, account settings, and admin analytics.
 
 ### Design rules
 
@@ -331,7 +331,7 @@ This is a free student research project, built as a response to engagement-drive
 - No online, typing, or read indicators.
 - No re-engagement or reminder emails. The only emails are sign-in links and one "new match" email.
 - No skip button. Reloading Discover shows the same person again.
-- No ads, no tracking scripts, and nothing loaded from other sites. HTMX, Pico.css, and Chart.js are copied into `static/vendor/`, at pinned versions checked against npm's published checksums.
+- No ads, no tracking scripts, and nothing loaded from other sites. HTMX, Chart.js, and the Caveat and Inter fonts (from `@fontsource`, under the SIL Open Font License) are copied into `static/vendor/`, at pinned versions checked against npm's published checksums. The styles are hand-written in `static/app.css`, with no CSS framework.
 - One person at a time, with a calm end state when nobody's left, and no prompts to come back.
 
 ### Running it locally
@@ -351,13 +351,15 @@ Open http://localhost:8000 in a browser, enter an email (`dev.user01@bu.edu` for
 | Area | What's there |
 | --- | --- |
 | Public | `/`, which explains the project and takes an email, and `/transparency`, which covers what's collected, who sees what, the algorithms, and these rules |
-| Onboarding, in order | Consent, profile, who you'd like to meet, photos, then "under review" until an admin approves you |
-| Discover | One profile at a time, with a 1 to 10 slider and number box and no default value. Shows how many people are left. Report and block are in a menu. |
-| Matches | Each match's first name, photo, and last message time. Chat polls every 5 seconds only while it's open. Unmatch, block, and report are in a menu. |
-| Me | Edit your profile, photos, and preferences, see who you've blocked, set match emails, opt out of the experiment, pause, download your data, or delete your account |
+| Onboarding, in order | Consent, profile, who you'd like to meet, then "under review" until an admin approves you |
+| Discover | One profile at a time, with a 1 to 10 slider and number box and no default value. Shows how many people are left. Report and block are in a menu. Everyone eventually sees every other approved participant, whatever their gender. Asking again shows the same person, so nobody can be skipped, and someone who paused while on screen comes back once they unpause. |
+| Matches | Each match's first name and the date you matched. There's no in-app messaging. Unmatch, block, and report are in a menu. |
+| Me | Edit your profile and preferences, see who you've blocked, set match emails, opt out of the experiment, pause, download your data, or delete your account |
 | Admin | Overview, approvals, reports, algorithm comparison, controls, audit log, and export. Each needs a sign-in from the last `ADMIN_STEP_UP_MINUTES`. |
 
-**Surveys:** "Was this worth your time?" from 1 to 5 appears on Discover when nobody's left, and otherwise after every 25th rating, at most once a day. "Was this match worth your time?" appears once per match, in its chat, once the match is 3 days old. Both can be dismissed.
+**Surveys:** "Was this worth your time?" from 1 to 5 appears on Discover when nobody's left, and otherwise after every 25th rating, at most once a day. "Was your match with (name) worth your time?" appears on Matches, once per match, once the match is 3 days old. Both can be dismissed.
+
+**When rating opens:** admins set a date and time on the controls page, in `STUDY_TIMEZONE`. Before it, people can sign up and be approved, but Discover shows when rating opens, and ratings are refused. Leave it empty to open rating now.
 
 **Opting out:** users who opt out always get `DEFAULT_MATCHER`, and their data is left out of all analytics and exports. **Pausing** hides a user from everyone's pool without deleting anything.
 
@@ -373,7 +375,7 @@ The admin comparison page computes everything with the pure functions in `metric
 - **Surveys:** a matcher is chosen for each impression, so survey answers are credited to the matcher that served the person's last impression before answering.
 - **Selection bias:** a matcher that chooses who to show is evaluated on the people it chose, so its classification metrics aren't comparable with the random matcher's. The random matcher's data is the unbiased sample for offline evaluation.
 
-The export (`/admin/export.csv` and `.json`) has one row per impression. People appear as salted hashes using `EXPORT_SALT`, with age bands and gender. It has no emails, names, free text, photos, religion, or exact ages. Each export is audited with its row count.
+The export (`/admin/export.csv` and `.json`) has one row per impression. People appear as salted hashes using `EXPORT_SALT`, with age bands and gender. It has no emails, names, free text, religion, or exact ages. Each export is audited with its row count.
 
 **Run it as one process.** Rate limits, the matcher registry, and matcher state live in memory, so several workers would each have their own copy. SQLite in WAL mode handles one process's concurrent requests.
 
@@ -382,14 +384,13 @@ The export (`/admin/export.csv` and `.json`) has one row per impression. People 
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `SITE_URL` | `http://localhost:8000` | The site's address. Used in sign-in links and the CSRF check. |
-| `ALLOWED_EMAIL_DOMAINS` | `bu.edu` | Comma-separated. The domain must match exactly, so subdomains aren't allowed. |
+| `ALLOWED_EMAIL_DOMAINS` | (none) | Optional, comma-separated. Empty means any email domain can sign in. When set, the domain must match exactly, so subdomains aren't allowed. |
 | `ADMIN_EMAILS` | (none) | Comma-separated. These become admins, approved on their first sign-in. |
 | `APP_MAIN_DB` | `data/live/main.db` | The live database, kept apart from the simulated users. |
 | `APP_PERSONA_DB` | `data/live/personas.db` | Required by `ProfileManager`. Live users have no personas. |
-| `PHOTO_DIR` | `data/live/photos` | Photo storage. Never serve this folder publicly. |
 | `CONSENT_DIR` | `consent` | Folder of consent texts, named `v<version>.md`. |
-| `CONSENT_VERSION` | `1` | The version users must agree to. Raising it asks everyone to agree again. |
-| `REQUIRE_PHOTO` | `true` | Whether approval needs at least one photo. |
+| `CONSENT_VERSION` | `2` | The version users must agree to. Raising it asks everyone to agree again. |
+| `STUDY_TIMEZONE` | `America/New_York` | The time zone for when rating opens, as admins enter and see it. |
 | `MATCH_THRESHOLD` | `7.0` | Both people must rate each other at least this, on the 1 to 10 scale, to match. |
 | `COOKIE_SECURE` | `true` | Only send the session cookie over HTTPS. Set `false` for local http. |
 | `SESSION_DAYS` | `14` | How long a session lasts. |
@@ -416,12 +417,11 @@ The export (`/admin/export.csv` and `.json`) has one row per impression. People 
 | --- | --- | --- |
 | Sign-in | `POST /auth/request-link`, `GET /auth/verify`, `GET` and `POST /auth/consent`, `POST /auth/logout` | Anyone, then signed in |
 | Your account | `GET /me`, `DELETE /me` | Signed in. Deleting never needs consent or approval. |
-| Your data | `POST`, `GET`, and `PUT /me/profile`, `GET` and `PUT /me/preferences`, `POST /me/photos`, `DELETE /me/photos/{id}`, `PUT /me/photos` (reorder) | Signed in, with consent. Approval isn't needed. |
-| Photos | `GET /photos/{id}` | The owner, admins, and approved users who may see the owner |
+| Your data | `POST`, `GET`, and `PUT /me/profile`, `GET` and `PUT /me/preferences` | Signed in, with consent. Approval isn't needed. |
 | Feed and ratings | `GET /feed/next`, `POST /ratings` | Approved, with a profile |
-| Matches and chat | `GET /matches`, `POST /matches/{id}/unmatch`, `GET` and `POST /matches/{id}/messages` | Approved participants of an active match with no block |
+| Matches | `GET /matches`, `POST /matches/{id}/unmatch` | Approved participants of an active match |
 | Safety | `POST`, `GET`, and `DELETE /blocks`, `POST /reports` | Approved |
-| Admin | `GET /admin/accounts`, `POST /admin/accounts/{id}/approve`, `reject`, or `suspend`, `GET /admin/reports`, `POST /admin/reports/{id}/resolve`, `GET /admin/reports/{id}/messages` | Admins. Every action is written to `audit_log`. |
+| Admin | `GET /admin/accounts`, `POST /admin/accounts/{id}/approve`, `reject`, or `suspend`, `GET /admin/reports`, `POST /admin/reports/{id}/resolve` | Admins. Every action is written to `audit_log`. |
 
 ### Ratings in the app
 
@@ -432,21 +432,20 @@ People rate from 1 to 10. Ratings are stored on the same 0 to 1 scale as Jev's, 
 | Who | Can see |
 | --- | --- |
 | **Anyone** | Nothing except the consent text. Requesting a link gives the same reply for any address. |
-| **A signed-in user** | Their own email, profile, preferences, photos, and approval status, through `/me`. |
-| **Other approved users** | Your public profile and photos, but only once you're in their pool, have been shown to them, or have matched with them, and never if either of you has blocked the other. They never see your email, preferences, ratings, or whether you rated them, unless you match. |
-| **Your match** | Messages in your match, while it's active and neither of you has blocked the other. |
-| **Admins** | Emails, profiles, and photos in the approval queue, and reports. They can read a match's messages only through a report about it, and each read is logged. |
+| **A signed-in user** | Their own email, profile, preferences, and approval status, through `/me`. |
+| **Other approved users** | Your public profile (first name only), but only once you're in their pool, have been shown to them, or have matched with them, and never if either of you has blocked the other. They never see your email, preferences, ratings, or whether you rated them, unless you match. |
+| **Your match** | Your first name and public profile in their Matches list. There's no in-app messaging. |
+| **Admins** | Emails and profiles in the approval queue, and reports. |
 | **Matchers** | Public profiles, this run's ratings, and the eligible pool's user IDs. Never preferences, emails, or personas. |
 
 - **Email:** stored only in `accounts`, never on profiles.
 - **Sign-in:** login tokens and session ids are stored only as SHA-256 hashes. A link works once and expires after 15 minutes. The access log is off in the command above, and a filter removes tokens from server logs.
 - **Cookies:** `HttpOnly` and `SameSite=Lax`, and `Secure` unless turned off for local http.
 - **CSRF:** API requests that change anything must have an `Origin`, or else a `Referer`, matching `SITE_URL`. Every page form and HTMX request also carries a per-session CSRF token, derived from the session id, so nothing extra is stored. Pages send `Referrer-Policy: no-referrer`, which makes browsers send `Origin: null` on ordinary form posts. Those are accepted only with a valid token, and a foreign `Origin` is always refused.
-- **Security headers:** every response gets `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, and a strict `Content-Security-Policy` that allows only this site's own files, with no inline scripts or styles. Pages and API responses get `Cache-Control: no-store`. Photos get `Cache-Control: private`, and static files can be cached.
+- **Security headers:** every response gets `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, and a strict `Content-Security-Policy` that allows only this site's own files, with no inline scripts or styles. Pages and API responses get `Cache-Control: no-store`, and static files can be cached.
 - **Errors:** pages show friendly 403, 404, and 500 pages without internal details. Validation errors never repeat the values that were sent.
-- **Photos:** each upload is decoded by Pillow and re-encoded as a new JPEG. That rejects anything that isn't a real image and removes EXIF data such as GPS location. Photos are stored under random names, at most 1,600 pixels on the long side, with at most 5 photos of 5 MB each. Anyone not allowed to see a photo gets 404, so its existence isn't revealed.
-- **Deleting an account:** this removes the profile, preferences, photos and their files, ratings, impressions, matches and their messages, blocks, reports the user filed, sessions, and sign-in links. Reports about the user are kept as safety records, with the user removed. Audit rows are kept, with the user's ids replaced by `[deleted]`.
-- **Real people and agents stay apart:** the app uses its own database (`data/live/`), so simulated users never appear in real people's feeds.
+- **Deleting an account:** this removes the profile, preferences, ratings, impressions, matches, surveys, blocks, reports the user filed, sessions, and sign-in links. Reports about the user are kept as safety records, with the user removed. Audit rows are kept, with the user's ids replaced by `[deleted]`.
+- **Real people and agents stay apart:** the app uses its own database (`data/live/`). It refuses to start if `APP_MAIN_DB` or `APP_PERSONA_DB` points at any agent database in `paths.py`, or at a database holding agent profiles or personas. The live pool also never includes a profile with `agent` set. A read-only, checksummed snapshot of all agent data taken before the live study is in `archive/agent-data-2026-11-14/` (not in git).
 
 ## Changing the schema
 

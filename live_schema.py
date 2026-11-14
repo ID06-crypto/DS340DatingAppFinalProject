@@ -64,16 +64,6 @@ LIVE_SCHEMA = (
     """,
     "CREATE INDEX IF NOT EXISTS idx_matches_user_b ON matches (user_b)",
     """
-    CREATE TABLE IF NOT EXISTS messages (
-        message_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        match_id   TEXT NOT NULL REFERENCES matches (match_id) ON DELETE CASCADE,
-        sender_id  TEXT NOT NULL REFERENCES profiles (user_id) ON DELETE CASCADE,
-        body       TEXT NOT NULL CHECK (length(body) BETWEEN 1 AND 2000),
-        created_at TEXT NOT NULL
-    )
-    """,
-    "CREATE INDEX IF NOT EXISTS idx_messages_match ON messages (match_id, message_id)",
-    """
     CREATE TABLE IF NOT EXISTS blocks (
         blocker_id TEXT NOT NULL REFERENCES profiles (user_id) ON DELETE CASCADE,
         blocked_id TEXT NOT NULL REFERENCES profiles (user_id) ON DELETE CASCADE,
@@ -98,16 +88,6 @@ LIVE_SCHEMA = (
         resolved_at TEXT
     )
     """,
-    """
-    CREATE TABLE IF NOT EXISTS photos (
-        photo_id    TEXT PRIMARY KEY,
-        user_id     TEXT NOT NULL REFERENCES profiles (user_id) ON DELETE CASCADE,
-        position    INTEGER NOT NULL,
-        storage_key TEXT NOT NULL UNIQUE,
-        created_at  TEXT NOT NULL
-    )
-    """,
-    "CREATE INDEX IF NOT EXISTS idx_photos_user ON photos (user_id, position)",
     """
     CREATE TABLE IF NOT EXISTS impressions (
         impression_id TEXT PRIMARY KEY,

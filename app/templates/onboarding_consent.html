@@ -1,9 +1,16 @@
 {% extends "base.html" %}
 {% block title %}Consent{% endblock %}
 {% block content %}
+<p class="kicker">Step 1 of 3</p>
 <h1>Before you start</h1>
 <p>Please read this. It's version {{ version }}.</p>
-<article>{% for paragraph in consent_paragraphs %}<p>{{ paragraph }}</p>{% endfor %}</article>
+<article class="consent">
+  {% for kind, value in consent_blocks %}
+  {% if kind == "heading" %}{% if loop.first %}<p class="kicker">{{ value }}</p>{% else %}<h3>{{ value }}</h3>{% endif %}
+  {% elif kind == "list" %}<ul>{% for item in value %}<li>{{ item }}</li>{% endfor %}</ul>
+  {% else %}<p>{{ value }}</p>{% endif %}
+  {% endfor %}
+</article>
 <form method="post" action="/onboarding/consent">
   {% include "partials/csrf.html" %}
   <input type="hidden" name="version" value="{{ version }}">

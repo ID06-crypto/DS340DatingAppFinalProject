@@ -90,8 +90,9 @@ class Matcher(ABC):
 class RandomMatcher(Matcher):
     """Picks uniformly from the user's eligible pool.
 
-    This is the baseline a real matcher has to beat. The pool already applies mutual
-    gender interest, so a matcher gets no credit just for that.
+    This is the baseline a real matcher has to beat. In simulations the pool already
+    applies mutual gender interest, so a matcher gets no credit just for that. In the live
+    study the pool is everyone, so it shows every participant in random order.
     """
 
     name = "random"

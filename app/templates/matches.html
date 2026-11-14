@@ -1,20 +1,33 @@
 {% extends "base.html" %}
+{% from "partials/drawings.html" import two_cards %}
 {% block title %}Matches{% endblock %}
 {% block content %}
 <h1>Matches</h1>
+{% if survey %}{% include "partials/survey.html" %}{% endif %}
 {% if matches %}
-<ul class="photo-grid">
+<p class="kicker">You both rated each other {{ threshold }} or higher</p>
+<ol class="ledger">
   {% for m in matches %}
   <li>
-    {% if m.photo_id %}<img src="/photos/{{ m.photo_id }}" alt="Photo of {{ m.name }}">{% endif %}
     <div>
-      <a href="/matches/{{ m.match_id }}">{{ m.name }}</a><br>
-      <small>{% if m.last_message_at %}Last message <time datetime="{{ m.last_message_at }}">{{ m.last_message_at[:16].replace("T", " ") }} UTC</time>{% else %}No messages yet{% endif %}</small>
+      <span class="who">{{ m.name }}</span>
+      <time datetime="{{ m.matched_on }}">Matched on {{ m.matched_on }}</time>
     </div>
+    <details>
+      <summary>Options for {{ m.name }}</summary>
+      <ul>
+        <li><a href="/matches/{{ m.match_id }}/unmatch">Unmatch</a></li>
+        <li><a href="/people/{{ m.user_id }}/block">Block {{ m.name }}</a></li>
+        <li><a href="/people/{{ m.user_id }}/report?match_id={{ m.match_id }}">Report {{ m.name }}</a></li>
+      </ul>
+    </details>
   </li>
   {% endfor %}
-</ul>
+</ol>
 {% else %}
-<p>You don't have any matches yet. A match happens when you and someone else both rate each other {{ threshold }} or higher.</p>
+<div class="still">
+  {{ two_cards() }}
+  <p>You don't have any matches yet. A match happens when you and someone else both rate each other {{ threshold }} or higher.</p>
+</div>
 {% endif %}
 {% endblock %}

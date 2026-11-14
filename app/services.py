@@ -4,11 +4,12 @@ import logging
 import random
 import threading
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from app.config import Settings
 from app.emails import EmailSender
-from app.photos import PhotoStorage
 from app.ratelimit import RateLimiter
 from live_store import Account, LiveStore
 from manager import ProfileManager
@@ -25,6 +26,7 @@ class Controls:
     matcher_weights: dict[str, float]
     signups_paused: bool
     feed_paused: bool
+    rating_opens_at: datetime | None = None  # In UTC. Nobody can rate before it.
 
 
 def first_name(name: str) -> str:
@@ -37,12 +39,10 @@ class Services:
     manager: ProfileManager
     live: LiveStore
     email_sender: EmailSender
-    photo_storage: PhotoStorage
     matchers: dict[str, Matcher]
     rng: random.Random
     login_per_email: RateLimiter
     login_per_ip: RateLimiter
-    messages_per_user: RateLimiter
     # Matchers and the rng aren't thread-safe, and requests run on worker threads.
     matcher_lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -50,7 +50,7 @@ class Services:
         return (self.settings.consent_dir / f"v{self.settings.consent_version}.md").read_text(encoding="utf-8")
 
     def public_profile(self, user_id: str, own: bool = False) -> dict[str, Any]:
-        """A user's public profile and photo ids. Never their email, preferences, or ratings.
+        """A user's public profile. Never their email, preferences, or ratings.
 
         Other people see only a first name, and religion only when it's given.
         """
@@ -60,17 +60,23 @@ class Services:
             fields["name"] = first_name(fields["name"])
             if fields["religion"] is None:
                 del fields["religion"]
-        return {
-            "profile": fields,
-            "photo_ids": [photo.photo_id for photo in self.live.photos_for(user_id)],
-        }
+        return {"profile": fields}
 
     def controls(self) -> Controls:
         return Controls(
             matcher_weights={k: float(v) for k, v in self.live.get_setting("matcher_weights", {}).items()},
             signups_paused=bool(self.live.get_setting("signups_paused", False)),
             feed_paused=bool(self.live.get_setting("feed_paused", False)),
+            rating_opens_at=datetime.fromisoformat(opens) if (opens := self.live.get_setting("rating_opens_at")) else None,
         )
+
+    def local_time(self, moment: datetime) -> datetime:
+        return moment.astimezone(ZoneInfo(self.settings.study_timezone))
+
+    def describe_time(self, moment: datetime) -> str:
+        """Like "Monday, November 17 at 9:00 AM", in the study's time zone."""
+        local = self.local_time(moment)
+        return f"{local:%A, %B} {local.day} at {local:%I:%M %p}".replace(" at 0", " at ")
 
     def initialize_controls(self) -> None:
         """Set defaults on a new database, and log a changed MATCH_THRESHOLD once ratings exist."""
@@ -104,23 +110,16 @@ class Services:
             missing.append("profile")
         elif self.manager.get_preferences(account.user_id) is None:
             missing.append("preferences")
-        if self.settings.require_photo and (
-            account.user_id is None or not self.live.photos_for(account.user_id)
-        ):
-            missing.append("photo")
         return missing
 
     def delete_account(self, account: Account) -> None:
-        """Delete an account and everything about it, including photo files.
+        """Delete an account and everything about it.
 
         Deleting the profile cascades to the account row, sessions, preferences, ratings,
-        impressions, matches and their messages, blocks, photos rows, and reports the user
-        filed. Audit rows are kept, with the user's ids replaced.
+        impressions, matches, blocks, surveys, and reports the user filed. Audit rows are
+        kept, with the user's ids replaced.
         """
-        photos = self.live.photos_for(account.user_id) if account.user_id else []
         if account.user_id is not None:
             self.manager.delete_profile(account.user_id)
         self.live.delete_account_row(account.account_id, account.email_normalized)
-        for photo in photos:
-            self.photo_storage.delete(photo.storage_key)
         self.live.anonymize_audit([i for i in (account.account_id, account.user_id) if i])

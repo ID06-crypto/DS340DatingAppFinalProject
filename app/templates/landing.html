@@ -1,14 +1,19 @@
 {% extends "base.html" %}
+{% from "partials/drawings.html" import two_cards %}
 {% block title %}Welcome{% endblock %}
 {% block content %}
+<p class="kicker">A study in reciprocal matching</p>
 <h1>BU matching study</h1>
-<p>This is a free research project by BU students. It tests whether a matching algorithm can recommend people who like each other, without the tricks many apps use to keep you scrolling.</p>
-<p>You'll see one person at a time and rate how interested you are. If two people rate each other highly, they match and can chat. There are no streaks, notifications to bring you back, or ads.</p>
+<figure class="hero">{{ two_cards() }}</figure>
+<p class="lede">This is a free research project by BU students. It tests whether a matching algorithm can recommend people who like each other, without the tricks many apps use to keep you scrolling.</p>
+<p>You'll see one person at a time and rate how interested you are. If two people rate each other highly, they match. There are no streaks, notifications to bring you back, or ads.</p>
 <p><a href="/transparency">Read exactly what we collect and who can see it</a></p>
-<h2>Sign in or join</h2>
-<form method="post" action="/login">
-  <label for="email">Your BU email address</label>
-  <input id="email" name="email" type="email" autocomplete="email" required placeholder="you@bu.edu">
-  <button type="submit">Email me a sign-in link</button>
-</form>
+<article>
+  <h2>Sign in or join</h2>
+  <form method="post" action="/login">
+    <label for="email">Your email address</label>
+    <input id="email" name="email" type="email" autocomplete="email" required placeholder="you@example.com">
+    <button type="submit" class="wide">Email me a sign-in link</button>
+  </form>
+</article>
 {% endblock %}

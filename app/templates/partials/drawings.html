@@ -1,0 +1,68 @@
+{# Small pencil drawings. Decorative only, so hidden from screen readers. Lines are drawn in
+   currentColor through the #rough filter defined in base.html. #}
+
+{% macro two_cards() %}
+<svg class="drawing" viewBox="0 0 340 200" aria-hidden="true" focusable="false">
+  <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" filter="url(#rough)">
+    {# Left card, tilted, with its hatched shadow. #}
+    <g transform="rotate(-6 92 108)">
+      <rect class="shade" x="50" y="44" width="96" height="128"/>
+      <rect class="sheet" x="42" y="36" width="96" height="128"/>
+      <circle cx="90" cy="76" r="15"/>
+      <path d="M64 112c6-16 46-16 52 0"/>
+      <path d="M56 130h66M56 141h48M56 152h56" stroke-width="1.4"/>
+    </g>
+    {# Right card. #}
+    <g transform="rotate(5 250 108)">
+      <rect class="shade" x="210" y="44" width="96" height="128"/>
+      <rect class="sheet" x="202" y="36" width="96" height="128"/>
+      <circle cx="250" cy="76" r="15"/>
+      <path d="M224 112c6-16 46-16 52 0"/>
+      <path d="M216 130h66M216 141h40M216 152h58" stroke-width="1.4"/>
+    </g>
+    {# Each rates the other: arrows both ways. #}
+    <path d="M138 50c20-28 54-30 72-8"/>
+    <path d="M200 38l11 6-9 8"/>
+    <path d="M206 166c-22 26-58 26-76 2"/>
+    <path d="M141 176l-11-8 12-4"/>
+  </g>
+  <text x="162" y="22" font-size="26">8.5</text>
+  <text x="152" y="198" font-size="26">9.0</text>
+</svg>
+{% endmacro %}
+
+{% macro pile() %}
+<svg class="drawing" viewBox="0 0 220 150" aria-hidden="true" focusable="false">
+  <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" filter="url(#rough)">
+    <rect class="shade" x="64" y="36" width="104" height="96"/>
+    <rect class="sheet" x="40" y="30" width="104" height="96" transform="rotate(-8 92 78)"/>
+    <rect class="sheet" x="50" y="24" width="104" height="96" transform="rotate(4 102 72)"/>
+    <rect class="sheet" x="56" y="28" width="104" height="96"/>
+    <path d="M84 78c7 5 12 11 16 20 9-22 22-38 40-52" stroke-width="3"/>
+  </g>
+</svg>
+{% endmacro %}
+
+{% macro envelope() %}
+<svg class="drawing" viewBox="0 0 220 140" aria-hidden="true" focusable="false">
+  <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" filter="url(#rough)">
+    <rect class="shade" x="48" y="34" width="132" height="86"/>
+    <rect class="sheet" x="40" y="26" width="132" height="86"/>
+    <path d="M42 28l64 50 64-50"/>
+    <path d="M42 110l46-38M170 110l-46-38" stroke-width="1.4"/>
+    <path d="M178 18c8-6 14-8 22-8M182 30c8-2 14-2 20 0" stroke-width="1.4"/>
+  </g>
+</svg>
+{% endmacro %}
+
+{% macro hourglass() %}
+<svg class="drawing" viewBox="0 0 220 150" aria-hidden="true" focusable="false">
+  <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" filter="url(#rough)">
+    <path d="M76 20h68M76 130h68"/>
+    <path d="M84 20c0 34 52 38 52 55s-52 21-52 55"/>
+    <path d="M136 20c0 34-52 38-52 55s52 21 52 55"/>
+    <path class="shade" d="M92 122c6-14 30-14 36 0z"/>
+    <path d="M110 80v30" stroke-dasharray="2 5"/>
+  </g>
+</svg>
+{% endmacro %}

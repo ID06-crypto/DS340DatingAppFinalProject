@@ -1,6 +1,8 @@
 {% extends "base.html" %}
+{% from "partials/drawings.html" import hourglass %}
 {% block title %}Under review{% endblock %}
 {% block content %}
+<div class="still">
 {% if status == "rejected" %}
 <h1>Your account wasn't approved</h1>
 <p>Your account wasn't approved for this study. You can still delete your account from here.</p>
@@ -8,9 +10,13 @@
 <h1>Your account is suspended</h1>
 <p>Your account has been suspended. You can still delete your account from here.</p>
 {% else %}
+{{ hourglass() }}
 <h1>Your profile is under review.</h1>
 <p>An administrator will check it soon. There's nothing else to do until then.</p>
 {% endif %}
-<p><a href="/me/delete">Delete my account</a></p>
-<form method="post" action="/logout">{% include "partials/csrf.html" %}<button type="submit">Sign out</button></form>
+</div>
+<ul class="plain links">
+  <li><a href="/me/delete">Delete my account</a></li>
+</ul>
+<form method="post" action="/logout">{% include "partials/csrf.html" %}<button type="submit" class="quiet">Sign out</button></form>
 {% endblock %}

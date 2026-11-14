@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 SESSION_COOKIE = "session"
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 _LOCAL_PART = re.compile(r"[a-z0-9._%-]+")
+_DOMAIN = re.compile(r"[a-z0-9-]+(\.[a-z0-9-]+)+")
 _TOKEN_IN_TEXT = re.compile(r"(token=)[^&\s\"']+")
 
 # Only this site's own files: no inline scripts or styles, and nothing from other origins.
@@ -31,15 +32,19 @@ SECURITY_HEADERS = {
 
 
 def normalize_email(raw: str, allowed_domains: Iterable[str] | None = None) -> str | None:
-    """Lowercase, strip, and drop any "+tag". Returns None for a bad or disallowed address."""
+    """Lowercase, strip, and drop any "+tag". Returns None for a bad or disallowed address.
+
+    Any domain is accepted unless allowed_domains lists some.
+    """
     email = raw.strip().lower()
     if email.count("@") != 1:
         return None
     local, domain = email.split("@")
     local = local.split("+", 1)[0]
-    if not local or not _LOCAL_PART.fullmatch(local) or not domain:
+    if not local or not _LOCAL_PART.fullmatch(local) or not _DOMAIN.fullmatch(domain):
         return None
-    if allowed_domains is not None and domain not in set(allowed_domains):
+    allowed = set(allowed_domains or ())
+    if allowed and domain not in allowed:
         return None
     return f"{local}@{domain}"
 

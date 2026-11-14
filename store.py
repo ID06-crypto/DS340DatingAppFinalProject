@@ -162,8 +162,14 @@ _ELIGIBLE_CANDIDATES = """
     FROM profiles AS me
     JOIN profiles AS c ON c.user_id <> me.user_id
     WHERE me.user_id = :me
-        AND EXISTS (SELECT 1 FROM preferences WHERE user_id = :me AND gender = c.gender)
-        AND EXISTS (SELECT 1 FROM preferences WHERE user_id = c.user_id AND gender = me.gender)
+        -- Simulations show only mutual gender interest. The live study shows everyone, so
+        -- each person rates every other participant, and preferences are only recorded.
+        AND (:live OR (
+            EXISTS (SELECT 1 FROM preferences WHERE user_id = :me AND gender = c.gender)
+            AND EXISTS (SELECT 1 FROM preferences WHERE user_id = c.user_id AND gender = me.gender)
+        ))
+        -- Real people are never shown simulated users.
+        AND NOT (:live AND c.agent)
         AND CASE WHEN :live
             THEN EXISTS (
                 SELECT 1 FROM accounts
@@ -339,10 +345,12 @@ class Store:
     def eligible_candidates(self, user_id: str, run_id: str = LIVE_RUN_ID) -> list[str]:
         """The user_ids this user may be shown next in this run, sorted.
 
-        Only approved, unpaused accounts, never themselves, nobody blocked either way, nobody they
-        have an active match with, mutual gender interest, and nobody they've already
-        rated in this run. In the live app, also nobody they've already been shown.
-        Users without preferences have an empty pool and appear in nobody's.
+        Never themselves, nobody blocked either way, nobody they have an active match
+        with, and nobody they've already rated in this run.
+
+        In simulations, only mutual gender interest, so users without preferences have an
+        empty pool. In the live app there's no gender filter: only approved, unpaused real
+        people (never agents), and nobody they've already been shown.
         """
         with connect(self.db_path) as conn:
             rows = conn.execute(

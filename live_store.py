@@ -53,14 +53,6 @@ class Account(BaseModel):
     paused: bool = False
 
 
-class Photo(BaseModel):
-    photo_id: str
-    user_id: str
-    position: int
-    storage_key: str
-    created_at: str
-
-
 class Impression(BaseModel):
     impression_id: str
     viewer_id: str
@@ -84,14 +76,6 @@ class Match(BaseModel):
 
     def other(self, user_id: str) -> str:
         return self.user_b if user_id == self.user_a else self.user_a
-
-
-class Message(BaseModel):
-    message_id: int
-    match_id: str
-    sender_id: str
-    body: str
-    created_at: str
 
 
 class Survey(BaseModel):
@@ -276,58 +260,6 @@ class LiveStore:
         with transaction(self.db_path) as conn:
             conn.execute("DELETE FROM sessions WHERE session_hash = ?", (session_hash,))
 
-    # Photos
-
-    def add_photo(self, user_id: str, storage_key: str, max_photos: int) -> Photo | None:
-        """Add a photo at the end, or return None if the user already has max_photos."""
-        photo_id = new_id()
-        with transaction(self.db_path) as conn:
-            count = conn.execute("SELECT COUNT(*) FROM photos WHERE user_id = ?", (user_id,)).fetchone()[0]
-            if count >= max_photos:
-                return None
-            conn.execute(
-                "INSERT INTO photos (photo_id, user_id, position, storage_key, created_at) VALUES (?, ?, ?, ?, ?)",
-                (photo_id, user_id, count, storage_key, to_text(utc_now())),
-            )
-        return self.get_photo(photo_id)
-
-    def get_photo(self, photo_id: str) -> Photo | None:
-        with connect(self.db_path) as conn:
-            row = conn.execute("SELECT * FROM photos WHERE photo_id = ?", (photo_id,)).fetchone()
-        return Photo.model_validate(dict(row)) if row else None
-
-    def photos_for(self, user_id: str) -> list[Photo]:
-        with connect(self.db_path) as conn:
-            rows = conn.execute(
-                "SELECT * FROM photos WHERE user_id = ? ORDER BY position", (user_id,)
-            ).fetchall()
-        return [Photo.model_validate(dict(row)) for row in rows]
-
-    def delete_photo(self, photo_id: str) -> None:
-        with transaction(self.db_path) as conn:
-            row = conn.execute("SELECT user_id FROM photos WHERE photo_id = ?", (photo_id,)).fetchone()
-            conn.execute("DELETE FROM photos WHERE photo_id = ?", (photo_id,))
-            if row is not None:
-                self._renumber(conn, row["user_id"], None)
-
-    def reorder_photos(self, user_id: str, photo_ids: list[str]) -> bool:
-        """Set the order, which must list each of the user's photos exactly once."""
-        with transaction(self.db_path) as conn:
-            current = [r["photo_id"] for r in conn.execute("SELECT photo_id FROM photos WHERE user_id = ?", (user_id,))]
-            if sorted(current) != sorted(photo_ids) or len(set(photo_ids)) != len(photo_ids):
-                return False
-            self._renumber(conn, user_id, photo_ids)
-        return True
-
-    @staticmethod
-    def _renumber(conn: Any, user_id: str, order: list[str] | None) -> None:
-        if order is None:
-            order = [r["photo_id"] for r in conn.execute(
-                "SELECT photo_id FROM photos WHERE user_id = ? ORDER BY position", (user_id,)
-            )]
-        for position, photo_id in enumerate(order):
-            conn.execute("UPDATE photos SET position = ? WHERE photo_id = ?", (position, photo_id))
-
     # Impressions
 
     def create_impression(
@@ -380,6 +312,15 @@ class LiveStore:
                 (viewer_id,),
             ).fetchone()
         return Impression.model_validate(dict(row)) if row else None
+
+    def unrated_impressions(self, viewer_id: str) -> list[Impression]:
+        """Every impression the viewer hasn't rated yet, newest first."""
+        with connect(self.db_path) as conn:
+            rows = conn.execute(
+                "SELECT * FROM impressions WHERE viewer_id = ? AND rated_at IS NULL ORDER BY shown_at DESC",
+                (viewer_id,),
+            ).fetchall()
+        return [Impression.model_validate(dict(row)) for row in rows]
 
     def count_rated(self, viewer_id: str) -> int:
         with connect(self.db_path) as conn:
@@ -470,37 +411,6 @@ class LiveStore:
                 "SELECT * FROM matches WHERE user_a = ? OR user_b = ? ORDER BY created_at", (user_id, user_id)
             ).fetchall()
         return [Match.model_validate(dict(row)) for row in rows]
-
-    def last_message_at(self, match_id: str) -> str | None:
-        with connect(self.db_path) as conn:
-            row = conn.execute("SELECT MAX(created_at) FROM messages WHERE match_id = ?", (match_id,)).fetchone()
-        return row[0]
-
-    # Messages
-
-    def add_message(self, match_id: str, sender_id: str, body: str) -> Message:
-        with transaction(self.db_path) as conn:
-            cursor = conn.execute(
-                "INSERT INTO messages (match_id, sender_id, body, created_at) VALUES (?, ?, ?, ?)",
-                (match_id, sender_id, body, to_text(utc_now())),
-            )
-            row = conn.execute("SELECT * FROM messages WHERE message_id = ?", (cursor.lastrowid,)).fetchone()
-        return Message.model_validate(dict(row))
-
-    def messages_after(self, match_id: str, after: int, limit: int = 200) -> list[Message]:
-        with connect(self.db_path) as conn:
-            rows = conn.execute(
-                "SELECT * FROM messages WHERE match_id = ? AND message_id > ? ORDER BY message_id LIMIT ?",
-                (match_id, after, limit),
-            ).fetchall()
-        return [Message.model_validate(dict(row)) for row in rows]
-
-    def messages_sent_by(self, sender_id: str) -> list[Message]:
-        with connect(self.db_path) as conn:
-            rows = conn.execute(
-                "SELECT * FROM messages WHERE sender_id = ? ORDER BY message_id", (sender_id,)
-            ).fetchall()
-        return [Message.model_validate(dict(row)) for row in rows]
 
     # Blocks
 

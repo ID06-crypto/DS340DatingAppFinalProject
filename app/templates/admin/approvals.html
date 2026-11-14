@@ -13,9 +13,6 @@
   {% if item.person %}
   {% set p = item.person.profile %}
   <p>{{ p.name }}, {{ p.age }}, {{ p.gender }}. {{ p.school }}, {{ p.major }}. {{ p.job }}. Interests: {{ p.interests|join(", ") }}.</p>
-  <div class="carousel" role="region" aria-label="Photos of {{ p.name }}" tabindex="0">
-    {% for photo_id in item.person.photo_ids %}<img src="/photos/{{ photo_id }}" alt="Photo {{ loop.index }} of {{ item.person.photo_ids|length }} of {{ first_name(p.name) }}">{% endfor %}
-  </div>
   {% endif %}
   <div class="inline-forms">
     {% if status != "approved" %}

@@ -2,7 +2,7 @@
 {% block title %}Report {{ name }}{% endblock %}
 {% block content %}
 <h1>Report {{ name }}</h1>
-<p>Administrators will review this. {{ name }} isn't told who reported them.{% if match_id %} Because you've matched, an administrator may read your conversation to review it, and that access is logged.{% endif %}</p>
+<p>Administrators will review this. {{ name }} isn't told who reported them.</p>
 <form method="post" action="/people/{{ user_id }}/report">
   {% include "partials/csrf.html" %}
   {% if match_id %}<input type="hidden" name="match_id" value="{{ match_id }}">{% endif %}

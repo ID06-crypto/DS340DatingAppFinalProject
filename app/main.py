@@ -2,6 +2,7 @@
 
 import logging
 import random
+import sqlite3
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -17,21 +18,44 @@ from app.actions import ActionError
 from app.config import Settings
 from app.emails import EmailSender, email_sender_for
 from app.matchers import build_matchers
-from app.photos import LocalDiskPhotoStorage, PhotoStorage
 from app.ratelimit import RateLimiter
 from app.security import install_log_redaction, install_security
 from app.services import Services
 from live_store import LiveStore
 from manager import ProfileManager
+import paths
+
+
+def refuse_agent_databases(settings: Settings) -> None:
+    """Stop at startup if the live app points at simulated-agent data.
+
+    Real people must never be shown agents, and the agents' data must never get live
+    tables or real people's rows mixed into it. This runs before any table is created.
+    """
+    agent_files = {paths.MAIN_DB, paths.PERSONA_DB, paths.SOURCE_MAIN_DB, paths.SOURCE_PERSONA_DB}
+    for path in (settings.main_db, settings.persona_db):
+        if path.resolve() in {p.resolve() for p in agent_files}:
+            raise RuntimeError(f"{path} holds simulated-agent data. Point APP_MAIN_DB and APP_PERSONA_DB at the live database.")
+    checks = ((settings.main_db, "SELECT 1 FROM profiles WHERE agent = 1 LIMIT 1"), (settings.persona_db, "SELECT 1 FROM personas LIMIT 1"))
+    for path, sql in checks:
+        if not path.exists():
+            continue
+        with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
+            try:
+                found = conn.execute(sql).fetchone()
+            except sqlite3.OperationalError:  # The table doesn't exist yet.
+                found = None
+        if found:
+            raise RuntimeError(f"{path} contains simulated agents or personas. The live app needs its own database.")
 
 
 def create_app(
     settings: Settings | None = None,
     email_sender: EmailSender | None = None,
-    photo_storage: PhotoStorage | None = None,
     rng: random.Random | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
+    refuse_agent_databases(settings)
     settings.main_db.parent.mkdir(parents=True, exist_ok=True)
     manager = ProfileManager(settings.main_db, settings.persona_db)  # Creates every table.
     rng = rng or random.Random(settings.matcher_seed)
@@ -40,12 +64,10 @@ def create_app(
         manager=manager,
         live=LiveStore(settings.main_db),
         email_sender=email_sender or email_sender_for(settings),
-        photo_storage=photo_storage or LocalDiskPhotoStorage(settings.photo_dir),
         matchers=build_matchers(settings.enabled_matchers, settings.default_matcher, rng),
         rng=rng,
         login_per_email=RateLimiter(settings.login_requests_per_email, settings.login_window_seconds),
         login_per_ip=RateLimiter(settings.login_requests_per_ip, settings.login_window_seconds),
-        messages_per_user=RateLimiter(settings.messages_per_minute, 60),
     )
     services.consent_text()  # Fail at startup, not on first use, if the text is missing.
     services.initialize_controls()

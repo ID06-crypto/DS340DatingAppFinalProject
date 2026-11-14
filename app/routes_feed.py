@@ -19,7 +19,7 @@ class RatingIn(BaseModel):
 
 @router.get("/feed/next")
 def next_profile(account: Account = Depends(approved_user), s: Services = Depends(services)) -> dict:
-    card = actions.next_impression(s, account)
+    card = actions.current_card(s, account)
     if card.impression is None:
         return {"profile": None, "pool_size": card.people_left, "message": card.message}
     return {"impression_id": card.impression.impression_id, **s.public_profile(card.impression.target_id)}

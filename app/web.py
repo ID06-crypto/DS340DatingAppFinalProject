@@ -99,8 +99,6 @@ def next_onboarding_step(s: Services, account: Account) -> str | None:
         return "/onboarding/profile"
     if s.manager.get_preferences(account.user_id) is None:
         return "/onboarding/preferences"
-    if s.settings.require_photo and not s.live.photos_for(account.user_id):
-        return "/onboarding/photos"
     if account.status != "approved":
         return "/pending"
     return None

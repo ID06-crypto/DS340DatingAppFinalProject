@@ -18,6 +18,12 @@
     </div>
     {% endfor %}
   </fieldset>
+  <fieldset>
+    <legend>When rating opens</legend>
+    <p>{% if opens_text %}Rating {{ "opened" if rating_open else "opens" }} on {{ opens_text }}.{% else %}Rating is open now.{% endif %} People can sign up and be approved before then, but nobody sees profiles or rates until this time. Leave it empty to open rating now.</p>
+    <label for="rating_opens_at">Opens at ({{ timezone }} time)</label>
+    <input id="rating_opens_at" name="rating_opens_at" type="datetime-local" value="{{ opens_value }}">
+  </fieldset>
   <label><input type="checkbox" name="signups_paused" value="yes" {% if controls.signups_paused %}checked{% endif %}> Pause new signups</label>
   <label><input type="checkbox" name="feed_paused" value="yes" {% if controls.feed_paused %}checked{% endif %}> Kill switch: turn off Discover for everyone, with a maintenance message</label>
   <button type="submit">Save</button>

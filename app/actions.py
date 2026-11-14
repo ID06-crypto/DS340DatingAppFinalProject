@@ -5,13 +5,12 @@ A function that refuses raises ActionError with an HTTP status and a plain messa
 """
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from app.photos import MAX_PHOTOS, InvalidPhotoError, clean_photo, new_storage_key
 from app.security import new_secret, normalize_email
 from app.services import Services
-from live_store import Account, Impression, Match, Message, Photo, Report, sha256, utc_now
+from live_store import Account, Impression, Match, Report, sha256, utc_now
 from matching import PublicView
 from models import GENDERS, LIVE_RUN_ID
 
@@ -81,7 +80,7 @@ def give_consent(s: Services, account: Account, version: str) -> None:
     s.live.record_consent(account.account_id, version)
 
 
-# Profile, preferences, and photos
+# Profile and preferences
 
 
 def require_profile(account: Account) -> str:
@@ -108,40 +107,8 @@ def set_preferences(s: Services, account: Account, interested_in: list[str] | st
     return s.manager.set_preferences(require_profile(account), genders).interested_in
 
 
-def upload_photo(s: Services, account: Account, data: bytes, max_bytes: int) -> Photo:
-    user_id = require_profile(account)
-    if len(data) > max_bytes:
-        raise ActionError(413, "Photos can be at most 5 MB")
-    if len(s.live.photos_for(user_id)) >= MAX_PHOTOS:
-        raise ActionError(409, f"You can have at most {MAX_PHOTOS} photos")
-    try:
-        cleaned = clean_photo(data)
-    except InvalidPhotoError as error:
-        raise ActionError(415, str(error)) from None
-    key = new_storage_key()
-    s.photo_storage.save(key, cleaned)
-    photo = s.live.add_photo(user_id, key, MAX_PHOTOS)
-    if photo is None:  # Another upload reached the limit first.
-        s.photo_storage.delete(key)
-        raise ActionError(409, f"You can have at most {MAX_PHOTOS} photos")
-    return photo
-
-
-def delete_photo(s: Services, account: Account, photo_id: str) -> None:
-    photo = s.live.get_photo(photo_id)
-    if photo is None or photo.user_id != account.user_id:
-        raise ActionError(404, "Photo not found")
-    s.live.delete_photo(photo_id)
-    s.photo_storage.delete(photo.storage_key)
-
-
-def reorder_photos(s: Services, account: Account, photo_ids: list[str]) -> None:
-    if not s.live.reorder_photos(require_profile(account), photo_ids):
-        raise ActionError(400, "List each of your photos exactly once")
-
-
 def may_see(s: Services, account: Account, owner: str) -> bool:
-    """Whether this account may see another user's profile and photos.
+    """Whether this account may see another user's profile.
 
     The owner, admins, and approved users who have the owner in their pool, have been
     shown them, or have an active match with them, as long as neither has blocked the other.
@@ -160,13 +127,6 @@ def may_see(s: Services, account: Account, owner: str) -> bool:
         or s.live.was_shown(viewer, owner)
         or s.live.active_match_between(viewer, owner) is not None
     )
-
-
-def photo_bytes(s: Services, account: Account, photo_id: str) -> bytes:
-    photo = s.live.get_photo(photo_id)
-    if photo is None or not may_see(s, account, photo.user_id):
-        raise ActionError(404, "Photo not found")  # 404, so a photo's existence isn't revealed.
-    return s.photo_storage.load(photo.storage_key)
 
 
 # The feed and ratings
@@ -192,9 +152,18 @@ def choose_matcher(s: Services, account: Account) -> str:
     return s.rng.choices(names, weights=[weights[n] for n in names])[0]
 
 
+def rating_not_open_message(s: Services) -> str | None:
+    opens = s.controls().rating_opens_at
+    if opens is not None and utc_now() < opens:
+        return f"Rating opens on {s.describe_time(opens)}. Please come back then."
+    return None
+
+
 def _unavailable_message(s: Services, account: Account) -> str | None:
     if s.controls().feed_paused:
         return "Discover is paused for maintenance. Please check back later."
+    if (not_open := rating_not_open_message(s)) is not None:
+        return not_open
     if account.paused:
         return "Your account is paused, so you're hidden from others and can't see new people. You can unpause it on your Me page."
     return None
@@ -232,17 +201,20 @@ def next_impression(s: Services, account: Account) -> Card:
 
 
 def current_card(s: Services, account: Account) -> Card:
-    """Discover's card: the unrated profile already shown, if there is one, else the next.
+    """The card to show: an unrated profile already shown, if there is one, else the next.
 
-    Reloading the page shows the same person again, so reloading can't be used to skip.
+    Reloading, or asking the API again, shows the same person, so nobody can be skipped.
+    Someone shown but not rated, because they paused or were blocked meanwhile, comes back
+    once they can be shown again, so everyone ends up rated.
     """
     viewer = require_profile(account)
     message = _unavailable_message(s, account)
     if message:
         return Card(None, 0, message)
-    pending = s.live.pending_impression(viewer)
-    if pending is not None and _still_showable(s, viewer, pending.target_id):
-        return Card(pending, len(s.manager.eligible_candidates(viewer, LIVE_RUN_ID)) + 1)
+    waiting = [i for i in s.live.unrated_impressions(viewer) if _still_showable(s, viewer, i.target_id)]
+    if waiting:
+        targets = {i.target_id for i in waiting}
+        return Card(waiting[0], len(s.manager.eligible_candidates(viewer, LIVE_RUN_ID)) + len(targets))
     return next_impression(s, account)
 
 
@@ -272,6 +244,8 @@ def rate(s: Services, account: Account, impression_id: str, score: float) -> Rat
     viewer = require_profile(account)
     if not MIN_SCORE <= score <= MAX_SCORE:
         raise ActionError(422, "Ratings go from 1 to 10")
+    if (not_open := rating_not_open_message(s)) is not None:
+        raise ActionError(403, not_open)
     claim = s.live.claim_impression(impression_id, viewer)
     if claim == "missing":
         raise ActionError(404, "Impression not found")
@@ -302,7 +276,7 @@ def rate(s: Services, account: Account, impression_id: str, score: float) -> Rat
 
 
 def _email_new_match(s: Services, match: Match) -> None:
-    """One email per participant, with no names or photos, only if they want it."""
+    """One email per participant, with no names, only if they want it."""
     for user_id in (match.user_a, match.user_b):
         account = s.live.account_for_user(user_id)
         if account is not None and account.notify_on_match:
@@ -349,7 +323,7 @@ def answer_survey(s: Services, account: Account, kind: str, score: int, match_id
     s.live.add_survey(user_id, kind, score, match_id if kind == "post_match" else None)
 
 
-# Matches, chat, blocks, and reports
+# Matches, blocks, and reports
 
 
 def own_match(s: Services, account: Account, match_id: str) -> Match:
@@ -359,35 +333,11 @@ def own_match(s: Services, account: Account, match_id: str) -> Match:
     return match
 
 
-def open_chat(s: Services, account: Account, match_id: str) -> Match:
-    """A match its participants can still message in: active, and no block either way."""
-    match = own_match(s, account, match_id)
-    if match.status != "active" or s.live.blocked_either_way(match.user_a, match.user_b):
-        raise ActionError(403, "This match has ended")
-    return match
-
-
 def unmatch(s: Services, account: Account, match_id: str) -> None:
     match = own_match(s, account, match_id)
     if match.status != "active":
         raise ActionError(409, "This match has already ended")
     s.live.unmatch(match_id, account.user_id)
-
-
-def read_messages(s: Services, account: Account, match_id: str, after: int = 0) -> list[Message]:
-    open_chat(s, account, match_id)
-    return s.live.messages_after(match_id, after)
-
-
-def send_message(s: Services, account: Account, match_id: str, body: str) -> Message:
-    open_chat(s, account, match_id)
-    if not body.strip():
-        raise ActionError(422, "Messages can't be blank")
-    if len(body) > 2000:
-        raise ActionError(422, "Messages can be at most 2,000 characters")
-    if not s.messages_per_user.allow(account.user_id):
-        raise ActionError(429, "You're sending messages too quickly")
-    return s.live.add_message(match_id, account.user_id, body)
 
 
 def block(s: Services, account: Account, user_id: str) -> None:
@@ -456,10 +406,6 @@ def export_my_data(s: Services, account: Account) -> dict[str, Any]:
             {"match_id": m.match_id, "with_user_id": m.other(user_id), "created_at": m.created_at, "status": m.status}
             for m in (s.live.matches_for(user_id) if user_id else [])
         ],
-        "messages_sent": [
-            {"match_id": m.match_id, "body": m.body, "created_at": m.created_at}
-            for m in (s.live.messages_sent_by(user_id) if user_id else [])
-        ],
     }
 
 
@@ -505,23 +451,13 @@ def resolve_report(s: Services, admin: Account, report_id: str, note: str = "") 
     s.live.audit(admin.account_id, "resolve_report", report_id, {"note": note})
 
 
-def read_report_messages(s: Services, admin: Account, report_id: str) -> list[Message]:
-    """The only way an admin can read messages. Every read is logged."""
-    report_row = s.live.get_report(report_id)
-    if report_row is None:
-        raise ActionError(404, "Report not found")
-    if report_row.match_id is None:
-        raise ActionError(404, "This report isn't about a match")
-    s.live.audit(admin.account_id, "read_report_messages", report_id, {"match_id": report_row.match_id})
-    return s.live.messages_after(report_row.match_id, 0, limit=10_000)
-
-
 def set_controls(
     s: Services,
     admin: Account,
     matcher_weights: dict[str, float],
     signups_paused: bool,
     feed_paused: bool,
+    rating_opens_at: datetime | None = None,
 ) -> None:
     unknown = set(matcher_weights) - set(s.matchers)
     if unknown or any(weight < 0 for weight in matcher_weights.values()):
@@ -529,10 +465,12 @@ def set_controls(
     s.live.set_setting("matcher_weights", matcher_weights)
     s.live.set_setting("signups_paused", signups_paused)
     s.live.set_setting("feed_paused", feed_paused)
+    opens = rating_opens_at.astimezone(timezone.utc).isoformat() if rating_opens_at else None
+    s.live.set_setting("rating_opens_at", opens)
     s.live.audit(
         admin.account_id,
         "set_controls",
         None,
-        {"matcher_weights": matcher_weights, "signups_paused": signups_paused, "feed_paused": feed_paused},
+        {"matcher_weights": matcher_weights, "signups_paused": signups_paused, "feed_paused": feed_paused, "rating_opens_at": opens},
     )
 

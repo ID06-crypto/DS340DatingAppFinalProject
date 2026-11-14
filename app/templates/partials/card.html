@@ -1,22 +1,15 @@
 {% set p = person.profile %}
-<article aria-labelledby="card-heading">
-  {% if person.photo_ids %}
-  <div class="carousel" role="region" aria-label="Photos of {{ p.name }}" tabindex="0">
-    {% for photo_id in person.photo_ids %}
-    <img src="/photos/{{ photo_id }}" alt="Photo {{ loop.index }} of {{ person.photo_ids|length }} of {{ p.name }}">
-    {% endfor %}
-  </div>
-  {% if person.photo_ids|length > 1 %}<p class="photo-count">{{ person.photo_ids|length }} photos. Swipe or scroll sideways to see them all.</p>{% endif %}
-  {% endif %}
-  <h2 id="card-heading" tabindex="-1" data-focus>{{ p.name }}, {{ p.age }}</h2>
+<article class="card" aria-labelledby="card-heading">
+  <p class="kicker">{{ p.gender }} · {{ p.looking_for }}</p>
+  <h2 id="card-heading" class="card-name" tabindex="-1" data-focus>{{ p.name }}, <span>{{ p.age }}</span></h2>
   <dl class="facts">
     <dt>Height</dt><dd>{{ height_text(p.height_cm) }}</dd>
     <dt>School</dt><dd>{{ p.school }}</dd>
     <dt>Major</dt><dd>{{ p.major }}</dd>
     <dt>Job</dt><dd>{{ p.job }}</dd>
     <dt>Looking for</dt><dd>{{ p.looking_for }}</dd>
-    <dt>Interests</dt><dd>{{ p.interests|join(", ") }}</dd>
-    {% if p.clubs %}<dt>Clubs</dt><dd>{{ p.clubs|join(", ") }}</dd>{% endif %}
+    <dt>Interests</dt><dd><ul class="tags">{% for interest in p.interests %}<li>{{ interest }}</li>{% endfor %}</ul></dd>
+    {% if p.clubs %}<dt>Clubs</dt><dd><ul class="tags">{% for club in p.clubs %}<li>{{ club }}</li>{% endfor %}</ul></dd>{% endif %}
     {% if p.religion %}<dt>Religion</dt><dd>{{ p.religion }}</dd>{% endif %}
   </dl>
 
@@ -31,8 +24,10 @@
       <div class="anchors" id="score-anchors">
         <span>1: not interested</span><span>5.5: neutral</span><span>10: really interested</span>
       </div>
-      <label for="score">Or type a number from 1.0 to 10.0</label>
-      <input id="score" name="score" type="number" min="1" max="10" step="0.1" inputmode="decimal" required>
+      <div class="score-row">
+        <label for="score">Or type a number from 1.0 to 10.0</label>
+        <input id="score" name="score" type="number" min="1" max="10" step="0.1" inputmode="decimal" required placeholder="–">
+      </div>
     </fieldset>
     <button type="submit" disabled>Submit rating</button>
   </form>

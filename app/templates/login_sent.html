@@ -1,7 +1,11 @@
 {% extends "base.html" %}
+{% from "partials/drawings.html" import envelope %}
 {% block title %}Check your inbox{% endblock %}
 {% block content %}
-<h1>Check your inbox</h1>
-<p>If that address can sign in, we've sent it a link. It works once and expires in {{ minutes }} minutes.</p>
-<p><a href="/">Use a different address</a></p>
+<div class="still">
+  {{ envelope() }}
+  <h1>Check your inbox</h1>
+  <p>If that address can sign in, we've sent it a link. It works once and expires in {{ minutes }} minutes.</p>
+  <p><a href="/">Use a different address</a></p>
+</div>
 {% endblock %}

@@ -11,12 +11,10 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from pydantic import ValidationError
-from starlette.datastructures import UploadFile
 
 from app import actions
 from app.actions import ActionError
 from app.deps import services, signed_in
-from app.photos import MAX_PHOTO_BYTES
 from app.routes_auth import set_session_cookie
 from app.security import SESSION_COOKIE
 from app.services import Services, first_name
@@ -133,11 +131,35 @@ def consent_page(request: Request, account: Account = Depends(page_account), s: 
     return _consent(request, s)
 
 
+def consent_blocks(text: str) -> list[tuple[str, Any]]:
+    """The consent Markdown as ("heading", text), ("list", [items]), or ("para", text) blocks.
+
+    Only headings, "- " lists, and paragraphs are used, so that's all this understands.
+    """
+    blocks: list[tuple[str, Any]] = []
+    for chunk in text.split("\n\n"):
+        lines = [line.rstrip() for line in chunk.strip().splitlines()]
+        while lines and lines[0].startswith("#"):
+            blocks.append(("heading", lines.pop(0).lstrip("#").strip()))
+        if not lines:
+            continue
+        if lines[0].startswith("- "):
+            items: list[str] = []
+            for line in lines:
+                if line.startswith("- "):
+                    items.append(line[2:].strip())
+                elif items:
+                    items[-1] += " " + line.strip()
+            blocks.append(("list", items))
+        else:
+            blocks.append(("para", " ".join(line.strip() for line in lines)))
+    return blocks
+
+
 def _consent(request: Request, s: Services, error: str | None = None) -> Response:
-    paragraphs = [p.strip().lstrip("#- ").strip() for p in s.consent_text().split("\n\n") if p.strip()]
     return render(request, "onboarding_consent.html", {
         "version": s.settings.consent_version,
-        "consent_paragraphs": paragraphs,
+        "consent_blocks": consent_blocks(s.consent_text()),
         "error": error,
     }, 422 if error else 200)
 
@@ -225,70 +247,12 @@ async def _save_preferences(request: Request, account: Account, s: Services, edi
     if not chosen:
         return _preferences(request, s, account, action, editing, "Choose at least one.")
     actions.set_preferences(s, account, "everyone" if "everyone" in chosen else chosen)
-    return redirect(request, "/me" if editing else "/onboarding/photos")
+    return redirect(request, "/me" if editing else "/pending")
 
 
 @router.post("/onboarding/preferences", dependencies=[csrf])
 async def preferences_submit(request: Request, account: Account = Depends(page_consented), s: Services = Depends(services)) -> Response:
     return await _save_preferences(request, account, s, editing=False)
-
-
-def _photos(request: Request, s: Services, account: Account, base: str, editing: bool, error: str | None = None) -> Response:
-    profile = s.manager.get_profile(account.user_id)
-    return render(request, "photos.html", {
-        "photos": s.live.photos_for(account.user_id),
-        "first": first_name(profile.name),
-        "base": base,
-        "editing": editing,
-        "error": error,
-    }, 422 if error else 200)
-
-
-@router.get("/onboarding/photos")
-def photos_page(request: Request, account: Account = Depends(page_consented), s: Services = Depends(services)) -> Response:
-    if account.user_id is None:
-        return redirect(request, "/onboarding/profile")
-    return _photos(request, s, account, "/onboarding/photos", editing=False)
-
-
-async def _upload(request: Request, account: Account, s: Services, base: str, editing: bool) -> Response:
-    form = await request.form()
-    upload = form.get("file")
-    if not isinstance(upload, UploadFile):
-        return _photos(request, s, account, base, editing, "Choose a photo to upload.")
-    try:
-        actions.upload_photo(s, account, await upload.read(MAX_PHOTO_BYTES + 1), MAX_PHOTO_BYTES)
-    except ActionError as error:
-        return _photos(request, s, account, base, editing, error.message)
-    return redirect(request, base)
-
-
-@router.post("/onboarding/photos", dependencies=[csrf])
-async def photos_upload(request: Request, account: Account = Depends(page_consented), s: Services = Depends(services)) -> Response:
-    return await _upload(request, account, s, "/onboarding/photos", editing=False)
-
-
-def _move(s: Services, account: Account, photo_id: str, direction: str) -> None:
-    order = [p.photo_id for p in s.live.photos_for(account.user_id)]
-    if photo_id not in order:
-        raise ActionError(404, "Photo not found")
-    i = order.index(photo_id)
-    j = i - 1 if direction == "up" else i + 1
-    if 0 <= j < len(order):
-        order[i], order[j] = order[j], order[i]
-        actions.reorder_photos(s, account, order)
-
-
-@router.post("/onboarding/photos/{photo_id}/move", dependencies=[csrf])
-async def photos_move(photo_id: str, request: Request, account: Account = Depends(page_consented), s: Services = Depends(services)) -> Response:
-    _move(s, account, photo_id, str((await request.form()).get("direction")))
-    return redirect(request, "/onboarding/photos")
-
-
-@router.post("/onboarding/photos/{photo_id}/delete", dependencies=[csrf])
-def photos_delete(photo_id: str, request: Request, account: Account = Depends(page_consented), s: Services = Depends(services)) -> Response:
-    actions.delete_photo(s, account, photo_id)
-    return redirect(request, "/onboarding/photos")
 
 
 @router.get("/pending")
@@ -312,7 +276,7 @@ def _discover_context(s: Services, account: Account, notice: str | None = None, 
     if actions.session_survey_due(s, account, pool_empty):
         actions.mark_survey_shown(s, account, "session")
         survey = {"kind": "session", "question": "Was this worth your time?", "match_id": None, "back": "/discover"}
-    return {"card": card, "person": person, "survey": survey, "notice": notice, "error": error, "nav": "discover"}
+    return {"card": card, "person": person, "survey": survey, "notice": notice, "error": error, "nav": "discover", "pool_empty": pool_empty}
 
 
 @router.get("/discover")
@@ -328,7 +292,7 @@ async def discover_rate(request: Request, account: Account = Depends(page_member
         score = float(str(form.get("score", "")))
         outcome = actions.rate(s, account, str(form.get("impression_id", "")), score)
         if outcome.matched:
-            notice = "It's a match. You can message each other in Matches."
+            notice = "It's a match. You'll find them in Matches."
     except ValueError:
         error = "Enter a rating from 1.0 to 10.0."
     except ActionError as failure:
@@ -394,7 +358,7 @@ def block(user_id: str, request: Request, account: Account = Depends(page_member
 @router.get("/people/{user_id}/report")
 def report_form(user_id: str, request: Request, match_id: str | None = None, account: Account = Depends(page_member), s: Services = Depends(services)) -> Response:
     name = _visible_person(s, account, user_id)
-    back = f"/matches/{match_id}" if match_id else "/discover"
+    back = "/matches" if match_id else "/discover"
     return render(request, "report_form.html", {"name": name, "user_id": user_id, "match_id": match_id, "back": back})
 
 
@@ -407,93 +371,49 @@ async def report(user_id: str, request: Request, account: Account = Depends(page
         actions.report(s, account, user_id, str(form.get("reason", "")), str(form.get("details", "")), match_id)
     except ActionError as error:
         return render(request, "report_form.html", {"name": name, "user_id": user_id, "match_id": match_id, "back": "/discover", "error": error.message}, error.status)
-    return redirect(request, f"/matches/{match_id}" if match_id else "/discover")
+    return redirect(request, "/matches" if match_id else "/discover")
 
 
-# Matches and chat
+# Matches
 
 
 @router.get("/matches")
 def matches(request: Request, account: Account = Depends(page_member), s: Services = Depends(services)) -> Response:
-    rows = []
+    rows, survey = [], None
     for match in s.live.active_matches_for(account.user_id):
         other = match.other(account.user_id)
-        photos = s.live.photos_for(other)
         rows.append({
             "match_id": match.match_id,
+            "user_id": other,
             "name": first_name(s.manager.get_profile(other).name),
-            "photo_id": photos[0].photo_id if photos else None,
-            "last_message_at": s.live.last_message_at(match.match_id),
+            "matched_on": match.created_at[:10],
         })
-    return render(request, "matches.html", {"matches": rows, "threshold": s.settings.match_threshold, "nav": "matches"})
-
-
-def _chat_context(s: Services, account: Account, match_id: str, error: str | None = None) -> dict[str, Any]:
-    match = actions.open_chat(s, account, match_id)
-    other = match.other(account.user_id)
-    return {
-        "match_id": match_id,
-        "other_id": other,
-        "name": first_name(s.manager.get_profile(other).name),
-        "messages": s.live.messages_after(match_id, 0),
-        "me": account.user_id,
-        "error": error,
-        "nav": "matches",
-    }
-
-
-@router.get("/matches/{match_id}")
-def chat(match_id: str, request: Request, account: Account = Depends(page_member), s: Services = Depends(services)) -> Response:
-    try:
-        context = _chat_context(s, account, match_id)
-    except ActionError as error:
-        if error.status == 403:
-            return render(request, "chat_ended.html", {"nav": "matches"})
-        raise HTTPException(error.status, error.message) from None
-    match = s.live.get_match(match_id)
-    if actions.post_match_survey_due(s, account, match):
-        actions.mark_survey_shown(s, account, "post_match", match_id)
-        context["survey"] = {"kind": "post_match", "question": "Was this match worth your time?", "match_id": match_id, "back": f"/matches/{match_id}"}
-    return render(request, "chat.html", context)
-
-
-@router.get("/matches/{match_id}/log")
-def chat_log(match_id: str, request: Request, account: Account = Depends(page_member), s: Services = Depends(services)) -> Response:
-    try:
-        context = _chat_context(s, account, match_id)
-    except ActionError:
-        # HTMX stops polling on status 286.
-        return Response("<p>This match has ended.</p>", status_code=286, media_type="text/html")
-    return render(request, "partials/messages.html", context)
-
-
-@router.post("/matches/{match_id}/send", dependencies=[csrf])
-async def chat_send(match_id: str, request: Request, account: Account = Depends(page_member), s: Services = Depends(services)) -> Response:
-    form = await request.form()
-    error = None
-    try:
-        actions.send_message(s, account, match_id, str(form.get("body", "")))
-    except ActionError as failure:
-        if failure.status in (403, 404):
-            return redirect(request, f"/matches/{match_id}")
-        error = failure.message
-    if not is_htmx(request):
-        return redirect(request, f"/matches/{match_id}")
-    return render(request, "partials/chat.html", _chat_context(s, account, match_id, error), 422 if error else 200)
+        if survey is None and actions.post_match_survey_due(s, account, match):
+            actions.mark_survey_shown(s, account, "post_match", match.match_id)
+            survey = {
+                "kind": "post_match",
+                "question": f"Was your match with {rows[-1]['name']} worth your time?",
+                "match_id": match.match_id,
+                "back": "/matches",
+            }
+    return render(request, "matches.html", {"matches": rows, "survey": survey, "threshold": s.settings.match_threshold, "nav": "matches"})
 
 
 @router.get("/matches/{match_id}/unmatch")
 def unmatch_confirm(match_id: str, request: Request, account: Account = Depends(page_member), s: Services = Depends(services)) -> Response:
     try:
-        name = _chat_context(s, account, match_id)["name"]
+        match = actions.own_match(s, account, match_id)
     except ActionError:
         raise HTTPException(404, "Not found") from None
+    if match.status != "active":
+        raise HTTPException(404, "Not found")
+    name = first_name(s.manager.get_profile(match.other(account.user_id)).name)
     return render(request, "confirm.html", {
         "heading": f"Unmatch {name}?",
-        "paragraphs": ["Your conversation ends for both of you, and you won't see each other again."],
+        "paragraphs": ["The match ends for both of you, and you won't see each other again."],
         "action": f"/matches/{match_id}/unmatch",
         "button": "Unmatch",
-        "cancel": f"/matches/{match_id}",
+        "cancel": "/matches",
     })
 
 
@@ -539,30 +459,6 @@ def me_preferences(request: Request, account: Account = Depends(page_member), s:
 @router.post("/me/preferences", dependencies=[csrf])
 async def me_preferences_save(request: Request, account: Account = Depends(page_member), s: Services = Depends(services)) -> Response:
     return await _save_preferences(request, account, s, editing=True)
-
-
-@router.get("/me/photos")
-def me_photos(request: Request, account: Account = Depends(page_member), s: Services = Depends(services)) -> Response:
-    return _photos(request, s, account, "/me/photos", editing=True)
-
-
-@router.post("/me/photos", dependencies=[csrf])
-async def me_photos_upload(request: Request, account: Account = Depends(page_member), s: Services = Depends(services)) -> Response:
-    return await _upload(request, account, s, "/me/photos", editing=True)
-
-
-@router.post("/me/photos/{photo_id}/move", dependencies=[csrf])
-async def me_photos_move(photo_id: str, request: Request, account: Account = Depends(page_member), s: Services = Depends(services)) -> Response:
-    _move(s, account, photo_id, str((await request.form()).get("direction")))
-    return redirect(request, "/me/photos")
-
-
-@router.post("/me/photos/{photo_id}/delete", dependencies=[csrf])
-def me_photos_delete(photo_id: str, request: Request, account: Account = Depends(page_member), s: Services = Depends(services)) -> Response:
-    if len(s.live.photos_for(account.user_id)) <= 1 and s.settings.require_photo:
-        return _photos(request, s, account, "/me/photos", editing=True, error="Add another photo before deleting your last one.")
-    actions.delete_photo(s, account, photo_id)
-    return redirect(request, "/me/photos")
 
 
 @router.get("/me/blocked")
@@ -612,7 +508,7 @@ def me_delete_confirm(request: Request, account: Account = Depends(page_account)
     return render(request, "confirm.html", {
         "heading": "Delete your account?",
         "paragraphs": [
-            "This permanently erases your account, profile, preferences, photos, ratings, matches, messages, and blocks, and the reports you've made. It can't be undone.",
+            "This permanently erases your account, profile, preferences, ratings, matches, and blocks, and the reports you've made. It can't be undone.",
             "Records of administrator actions are kept, with your identity removed.",
         ],
         "action": "/me/delete",

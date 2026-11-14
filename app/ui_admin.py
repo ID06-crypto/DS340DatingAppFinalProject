@@ -1,9 +1,11 @@
 """Admin pages. Each one needs an admin who signed in recently (step-up), and every view of
 sensitive data and every action is written to audit_log. There's deliberately no page for
-browsing messages, individual ratings, or anyone's rating history.
+browsing individual ratings or anyone's rating history.
 """
 
 import json
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
@@ -87,28 +89,6 @@ async def resolve(report_id: str, request: Request, admin: Account = Depends(pag
     return redirect(request, "/admin/reports")
 
 
-@router.get("/reports/{report_id}/conversation")
-def conversation_confirm(report_id: str, request: Request, admin: Account = Depends(page_admin), s: Services = Depends(services)) -> Response:
-    report = s.live.get_report(report_id)
-    if report is None or report.match_id is None:
-        raise HTTPException(404, "Not found")
-    return render(request, "confirm.html", {
-        "nav": "admin",
-        "heading": "View this reported conversation?",
-        "paragraphs": ["This access will be logged, with your account and the time.", "Only view it if you need it to review this report."],
-        "action": f"/admin/reports/{report_id}/conversation",
-        "button": "View the conversation",
-        "cancel": "/admin/reports",
-    })
-
-
-@router.post("/reports/{report_id}/conversation", dependencies=[csrf])
-def conversation(report_id: str, request: Request, admin: Account = Depends(page_admin), s: Services = Depends(services)) -> Response:
-    report = s.live.get_report(report_id)
-    messages = actions.read_report_messages(s, admin, report_id)  # Writes the audit entry.
-    return _page(request, "conversation.html", {"report": report, "messages": messages})
-
-
 @router.get("/compare")
 def compare(request: Request, k: int = 10, admin: Account = Depends(page_admin), s: Services = Depends(services)) -> Response:
     k = max(1, min(k, 100))
@@ -142,6 +122,10 @@ def controls(request: Request, admin: Account = Depends(page_admin), s: Services
     return _page(request, "controls.html", {
         "matchers": [(name, m.description, current.matcher_weights.get(name, 0.0)) for name, m in sorted(s.matchers.items())],
         "controls": current,
+        "opens_value": f"{s.local_time(current.rating_opens_at):%Y-%m-%dT%H:%M}" if current.rating_opens_at else "",
+        "opens_text": s.describe_time(current.rating_opens_at) if current.rating_opens_at else None,
+        "rating_open": actions.rating_not_open_message(s) is None,
+        "timezone": s.settings.study_timezone,
         "threshold": s.settings.match_threshold,
         "threshold_locked": s.live.count_live_ratings() > 0,
         "default_matcher": s.settings.default_matcher,
@@ -158,7 +142,12 @@ async def controls_save(request: Request, admin: Account = Depends(page_admin), 
         except ValueError:
             weight = 0.0
         weights[name] = weight if form.get(f"enabled_{name}") == "yes" else 0.0
-    actions.set_controls(s, admin, weights, form.get("signups_paused") == "yes", form.get("feed_paused") == "yes")
+    opens_text = str(form.get("rating_opens_at", "")).strip()
+    try:
+        opens = datetime.fromisoformat(opens_text).replace(tzinfo=ZoneInfo(s.settings.study_timezone)) if opens_text else None
+    except ValueError:
+        raise HTTPException(422, "Enter the date and time rating opens, or leave it empty.") from None
+    actions.set_controls(s, admin, weights, form.get("signups_paused") == "yes", form.get("feed_paused") == "yes", opens)
     return redirect(request, "/admin/controls")
 
 

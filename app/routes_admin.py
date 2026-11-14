@@ -14,11 +14,11 @@ router = APIRouter(prefix="/admin")
 
 @router.get("/accounts")
 def list_accounts(status: str | None = "pending", admin: Account = Depends(admin_account), s: Services = Depends(services)) -> list[dict]:
-    """Accounts to review, with their email, profile, and photo ids. Photos load via /photos."""
+    """Accounts to review, with their email and profile."""
     s.live.audit(admin.account_id, "view_accounts", None, {"status": status})
     result = []
     for account in s.live.list_accounts(status):
-        profile = s.public_profile(account.user_id, own=True) if account.user_id else {"profile": None, "photo_ids": []}
+        profile = s.public_profile(account.user_id, own=True) if account.user_id else {"profile": None}
         result.append({
             "account_id": account.account_id,
             "email": account.email_normalized,
@@ -44,7 +44,7 @@ def set_status(
 
 @router.get("/reports")
 def list_reports(status: str | None = "open", admin: Account = Depends(admin_account), s: Services = Depends(services)) -> list[dict]:
-    """Reports, without any message contents. Those are only readable per report, below."""
+    """Open or resolved reports."""
     s.live.audit(admin.account_id, "list_reports", None, {"status": status})
     return [report.model_dump() for report in s.live.list_reports(status)]
 
@@ -53,9 +53,3 @@ def list_reports(status: str | None = "open", admin: Account = Depends(admin_acc
 def resolve(report_id: str, admin: Account = Depends(admin_account), s: Services = Depends(services)) -> dict:
     actions.resolve_report(s, admin, report_id)
     return {"report_id": report_id, "status": "resolved"}
-
-
-@router.get("/reports/{report_id}/messages")
-def report_messages(report_id: str, admin: Account = Depends(admin_account), s: Services = Depends(services)) -> list[dict]:
-    """The only way an admin can read messages, and every read is logged."""
-    return [m.model_dump() for m in actions.read_report_messages(s, admin, report_id)]
