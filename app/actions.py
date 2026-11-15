@@ -142,10 +142,131 @@ def reset_password(s: Services, admin: Account, account_id: str) -> str:
     return temporary
 
 
-def give_consent(s: Services, account: Account, version: str) -> None:
+def give_consent(s: Services, account: Account, version: str, wants_best_match: bool | None = None) -> None:
+    """Record consent, and the optional best-match choice when the form asked for it."""
     if version != s.settings.consent_version:
         raise ActionError(409, f"The current consent version is {s.settings.consent_version}")
     s.live.record_consent(account.account_id, version)
+    if wants_best_match is not None:
+        set_best_match_choice(s, account, wants_best_match)
+
+
+# Best matches
+#
+# After the study, the team runs its algorithm offline and uploads one best-match pair per
+# person. Someone sees their best match, with that person's real name, only when both of
+# them opted in, the reveal time has passed, both are still approved participants, and
+# neither has blocked the other. Every one of these is checked each time the page loads,
+# so opting out later, deleting an account, or a block hides the pair straight away.
+
+BEST_MATCH_COLUMNS = ("participant_a", "participant_b")
+
+
+def set_best_match_choice(s: Services, account: Account, opted_in: bool) -> None:
+    if account.role == "admin":
+        return  # Admins don't take part.
+    if s.live.wants_best_match(account.account_id) == opted_in:
+        return
+    s.live.set_wants_best_match(account.account_id, opted_in)
+    s.live.audit(account.account_id, "best_match_choice", account.account_id, {"opted_in": opted_in})
+
+
+def results_open(s: Services) -> bool:
+    shown = s.controls().results_open_at
+    return shown is not None and utc_now() >= shown
+
+
+def best_match_for(s: Services, account: Account) -> dict[str, Any]:
+    """What this person may see about their best match.
+
+    state is "not_opted_in", "waiting" (results aren't out), "none" (no pair they can see),
+    or "revealed", which comes with the other person's profile and real name.
+    """
+    shown = s.controls().results_open_at
+    result: dict[str, Any] = {"state": "not_opted_in", "opens_text": s.describe_time(shown) if shown else None}
+    if account.user_id is None or not s.live.wants_best_match(account.account_id):
+        return result
+    if not results_open(s):
+        return {**result, "state": "waiting"}
+    other = s.live.best_match_of(account.user_id)
+    other_account = s.live.account_for_user(other) if other else None
+    if (
+        other is None
+        or other_account is None
+        or other_account.role != "user"
+        or other_account.status != "approved"
+        or account.status != "approved"
+        or not s.live.wants_best_match(other_account.account_id)
+        or s.live.blocked_either_way(account.user_id, other)
+    ):
+        return {**result, "state": "none"}
+    profile = s.public_profile(other)["profile"]
+    return {**result, "state": "revealed", "user_id": other, "profile": profile, "real_name": s.live.real_name(other) or profile["name"]}
+
+
+def participant_ids(s: Services) -> dict[str, str]:
+    """participant_id -> user_id for every real participant, as the exports name them."""
+    from app.analytics import pseudonym
+
+    with_profiles = [a.user_id for a in s.live.list_accounts(None) if a.role == "user" and a.user_id]
+    return {pseudonym(user_id, s.settings.export_salt): user_id for user_id in with_profiles}
+
+
+def upload_best_matches(s: Services, admin: Account, text: str) -> int:
+    """Replace the best-match pairs with a CSV of participant_a,participant_b rows, using
+    the participant_ids from the ground-truth download. Returns the number of pairs.
+
+    The whole file is refused, listing every problem, if any row is wrong: an unknown id,
+    someone paired with themselves or listed twice, or someone who hasn't opted in.
+    """
+    import csv
+    import io
+
+    if not s.settings.export_salt:
+        raise ActionError(409, "Set the EXPORT_SALT environment variable first. The pairs use the ids it produces.")
+    rows = list(csv.reader(io.StringIO(text.lstrip("\ufeff"))))
+    rows = [[cell.strip() for cell in row] for row in rows if any(cell.strip() for cell in row)]
+    if not rows or tuple(cell.lower() for cell in rows[0][:2]) != BEST_MATCH_COLUMNS:
+        raise ActionError(422, "The first line must be the column names: participant_a,participant_b")
+    known = participant_ids(s)
+    wanting = s.live.users_wanting_best_match()
+    problems: list[str] = []
+    seen: set[str] = set()
+    pairs: list[tuple[str, str]] = []
+    for line, row in enumerate(rows[1:], start=2):
+        if len(row) < 2 or not row[0] or not row[1]:
+            problems.append(f"Line {line}: needs two participant ids.")
+            continue
+        a, b = row[0].lower(), row[1].lower()
+        line_problems = [f"Line {line}: {pid} isn't a participant." for pid in (a, b) if pid not in known]
+        if a == b:
+            line_problems.append(f"Line {line}: {a} is paired with themselves.")
+        line_problems += [f"Line {line}: {pid} is already in an earlier pair." for pid in (a, b) if pid in seen]
+        line_problems += [
+            f"Line {line}: {pid} hasn't asked to see their best match." for pid in (a, b) if pid in known and known[pid] not in wanting
+        ]
+        seen.update((a, b))
+        if line_problems:
+            problems += line_problems
+        else:
+            pairs.append((known[a], known[b]))
+    if problems:
+        shown = problems[:20] + ([f"...and {len(problems) - 20} more."] if len(problems) > 20 else [])
+        raise ActionError(422, "Nothing was saved. Fix these and upload the file again: " + " ".join(shown), detail=problems)
+    s.live.replace_best_matches(pairs)
+    s.live.audit(admin.account_id, "upload_best_matches", None, {"pairs": len(pairs)})
+    return len(pairs)
+
+
+def clear_best_matches(s: Services, admin: Account) -> None:
+    s.live.replace_best_matches([])
+    s.live.audit(admin.account_id, "clear_best_matches", None, {})
+
+
+def set_results_open(s: Services, admin: Account, when: datetime | None) -> None:
+    shown = when.astimezone(timezone.utc).isoformat() if when else None
+    s.live.set_setting("results_open_at", shown)
+    s.live.audit(admin.account_id, "set_results_open", None, {"results_open_at": shown})
 
 
 # Profile and preferences
@@ -469,6 +590,7 @@ def export_my_data(s: Services, account: Account) -> dict[str, Any]:
             "consent_at": account.consent_at,
             "experiment_opt_out": account.experiment_opt_out,
             "paused": account.paused,
+            "wants_best_match": s.live.wants_best_match(account.account_id),
         },
         "profile": profile,
         "interested_in": sorted(preferences.interested_in) if preferences else None,

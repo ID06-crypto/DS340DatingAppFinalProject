@@ -19,6 +19,11 @@
     <input type="checkbox" name="agree" value="yes" required {% if error %}aria-describedby="consent-error"{% endif %}>
     I've read this and agree to take part
   </label>
+  <label>
+    <input type="checkbox" name="best_match" value="yes" aria-describedby="best-match-help" {% if wants_best_match %}checked{% endif %}>
+    <span>Optional: after the study, show me my best match, and show them my real name
+    <small id="best-match-help">You only see each other if you both tick this. You can change it any time on the Me page. Leaving it unticked doesn't change anything else.</small></span>
+  </label>
   <button type="submit">Continue</button>
 </form>
 {% endblock %}

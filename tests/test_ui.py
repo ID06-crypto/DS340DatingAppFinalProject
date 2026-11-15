@@ -84,8 +84,8 @@ def test_onboarding_order_and_pending_lock(env: Env) -> None:
     for path in ("/discover", "/matches", "/me", "/onboarding/profile"):
         assert browser.get(path).headers["location"] == "/onboarding/consent"
     csrf = csrf_of(browser.get("/onboarding/consent").text)
-    assert browser.post("/onboarding/consent", data={"csrf_token": csrf, "version": "2"}).status_code == 422
-    assert browser.post("/onboarding/consent", data={"csrf_token": csrf, "version": "2", "agree": "yes"}).headers["location"] == "/onboarding/profile"
+    assert browser.post("/onboarding/consent", data={"csrf_token": csrf, "version": "3"}).status_code == 422
+    assert browser.post("/onboarding/consent", data={"csrf_token": csrf, "version": "3", "agree": "yes"}).headers["location"] == "/onboarding/profile"
     assert browser.get("/discover").headers["location"] == "/onboarding/profile"
     form = {**{k: v for k, v in profile_body("Jane Doe", "woman").items() if not isinstance(v, list)},
             "interests": "Hiking,  chess", "clubs": "", "csrf_token": csrf, "religion": "  "}
@@ -757,7 +757,8 @@ def test_users_page_works_before_anyone_has_rated(env: Env, people: int) -> None
 
 
 @pytest.mark.parametrize("path", ["/admin", "/admin/approvals", "/admin/users", "/admin/compare", "/admin/reports",
-                                  "/admin/controls", "/admin/audit", "/admin/export.csv", "/admin/truth.zip", "/admin/backup.db"])
+                                  "/admin/controls", "/admin/audit", "/admin/export.csv", "/admin/truth.zip", "/admin/backup.db",
+                                  "/admin/best-matches"])
 def test_every_admin_page_works_with_people_but_no_ratings(env: Env, path: str) -> None:
     member(env, "a@bu.edu", "man", ("woman",))
     member(env, "b@bu.edu", "woman", ("man",))
@@ -770,7 +771,7 @@ def test_people_partway_through_signing_up_can_sign_out(env: Env, step: str) -> 
     sign-up step must offer Sign out, or nobody else can sign in on that browser."""
     client = env.login("half@bu.edu")
     if step != "/onboarding/consent":
-        client.post("/auth/consent", json={"version": "2"})
+        client.post("/auth/consent", json={"version": "3"})
     if step in ("/onboarding/preferences", "/pending"):
         assert client.post("/me/profile", json=profile_body()).status_code in (200, 201)
     if step == "/pending":

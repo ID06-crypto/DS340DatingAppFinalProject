@@ -27,6 +27,7 @@ class Controls:
     signups_paused: bool
     feed_paused: bool
     rating_opens_at: datetime | None = None  # In UTC. Nobody can rate before it.
+    results_open_at: datetime | None = None  # In UTC. Nobody sees a best match before it, or without it.
 
 
 def first_name(name: str) -> str:
@@ -87,6 +88,7 @@ class Services:
             signups_paused=bool(self.live.get_setting("signups_paused", False)),
             feed_paused=bool(self.live.get_setting("feed_paused", False)),
             rating_opens_at=datetime.fromisoformat(opens) if (opens := self.live.get_setting("rating_opens_at")) else None,
+            results_open_at=datetime.fromisoformat(shown) if (shown := self.live.get_setting("results_open_at")) else None,
         )
 
     def local_time(self, moment: datetime) -> datetime:

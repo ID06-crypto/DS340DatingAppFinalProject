@@ -4,6 +4,32 @@
 {% block content %}
 <h1>Matches</h1>
 {% if survey %}{% include "partials/survey.html" %}{% endif %}
+<section class="best-match" aria-labelledby="best-match-heading">
+  <h2 id="best-match-heading">Your best match</h2>
+  {% if best.state == "revealed" %}
+  <p class="kicker">The algorithm's pick for you, and yours for them</p>
+  <p class="lede"><strong>{{ best.real_name }}</strong>, shown in the study as {{ first_name(best.profile.name) }}.</p>
+  <p>You both asked to see your best match, so you each see the other's real name.</p>
+  {% set p = best.profile %}
+  <dl class="facts">
+    <dt>Age</dt><dd>{{ p.age }}</dd>
+    <dt>Height</dt><dd>{{ height_text(p.height_cm) }}</dd>
+    <dt>School</dt><dd>{{ p.school }}</dd>
+    <dt>Major</dt><dd>{{ p.major }}</dd>
+    <dt>Job</dt><dd>{{ p.job }}</dd>
+    <dt>Looking for</dt><dd>{{ p.looking_for }}</dd>
+    <dt>Interests</dt><dd><ul class="tags">{% for interest in p.interests %}<li>{{ interest }}</li>{% endfor %}</ul></dd>
+    {% if p.clubs %}<dt>Clubs</dt><dd><ul class="tags">{% for club in p.clubs %}<li>{{ club }}</li>{% endfor %}</ul></dd>{% endif %}
+  </dl>
+  {% elif best.state == "waiting" %}
+  <p>{% if best.opens_text %}Results come out on {{ best.opens_text }}.{% else %}Results come out after the study ends.{% endif %} You'll see your best match here if they also asked to see theirs.</p>
+  {% elif best.state == "none" %}
+  <p>Results are out, but the algorithm didn't pair you with anyone who also asked to see their best match.</p>
+  {% else %}
+  <p>After the study, the algorithm picks a best match for everyone who asks. You can ask on the <a href="/me">Me page</a>.</p>
+  {% endif %}
+</section>
+<h2>Matches from your ratings</h2>
 {% if matches %}
 <p class="kicker">You both rated each other {{ threshold }} or higher</p>
 <ol class="ledger">

@@ -26,6 +26,7 @@ class PasswordChange(BaseModel):
 class ConsentRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     version: str
+    wants_best_match: bool | None = None  # Optional: see your best match after the study.
 
 
 def set_session_cookie(response: Response, session_id: str, s: Services) -> None:
@@ -80,8 +81,8 @@ def consent_text(s: Services = Depends(services)) -> dict:
 
 @router.post("/auth/consent")
 def give_consent(body: ConsentRequest, account: Account = Depends(current_account), s: Services = Depends(services)) -> dict:
-    actions.give_consent(s, account, body.version)
-    return {"consent_version": body.version}
+    actions.give_consent(s, account, body.version, body.wants_best_match)
+    return {"consent_version": body.version, "wants_best_match": s.live.wants_best_match(account.account_id)}
 
 
 @router.post("/auth/logout")

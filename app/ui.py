@@ -221,7 +221,7 @@ def transparency(request: Request, s: Services = Depends(services)) -> Response:
 def consent_page(request: Request, account: Account = Depends(page_account), s: Services = Depends(services)) -> Response:
     if is_study_admin(account):
         return redirect(request, "/admin")  # Admins don't take part, so don't consent.
-    return _consent(request, s)
+    return _consent(request, s, wants_best_match=s.live.wants_best_match(account.account_id))
 
 
 def consent_blocks(text: str) -> list[tuple[str, Any]]:
@@ -249,20 +249,22 @@ def consent_blocks(text: str) -> list[tuple[str, Any]]:
     return blocks
 
 
-def _consent(request: Request, s: Services, error: str | None = None) -> Response:
+def _consent(request: Request, s: Services, error: str | None = None, wants_best_match: bool = False) -> Response:
     return render(request, "onboarding_consent.html", {
         "version": s.settings.consent_version,
         "consent_blocks": consent_blocks(s.consent_text()),
         "error": error,
+        "wants_best_match": wants_best_match,
     }, 422 if error else 200)
 
 
 @router.post("/onboarding/consent", dependencies=[csrf])
 async def consent_submit(request: Request, account: Account = Depends(page_account), s: Services = Depends(services)) -> Response:
     form = await request.form()
+    wants_best_match = form.get("best_match") == "yes"
     if form.get("agree") != "yes":
-        return _consent(request, s, "Tick the box to agree before continuing.")
-    actions.give_consent(s, account, str(form.get("version", "")))
+        return _consent(request, s, "Tick the box to agree before continuing.", wants_best_match)
+    actions.give_consent(s, account, str(form.get("version", "")), wants_best_match)
     return redirect(request, after_sign_in(s, s.live.get_account(account.account_id)))
 
 
@@ -494,7 +496,13 @@ def matches(request: Request, account: Account = Depends(page_member), s: Servic
                 "match_id": match.match_id,
                 "back": "/matches",
             }
-    return render(request, "matches.html", {"matches": rows, "survey": survey, "threshold": s.settings.match_threshold, "nav": "matches"})
+    return render(request, "matches.html", {
+        "matches": rows,
+        "survey": survey,
+        "threshold": s.settings.match_threshold,
+        "best": actions.best_match_for(s, account),
+        "nav": "matches",
+    })
 
 
 @router.get("/matches/{match_id}/unmatch")
@@ -533,7 +541,12 @@ def me(request: Request, account: Account = Depends(page_member), s: Services = 
     notice = {"saved": "Settings saved.", "paused": "Your account is paused.", "unpaused": "Your account is active again."}.get(
         request.query_params.get("done", "")
     )
-    return render(request, "me.html", {"notice": notice, "nav": "me", "shown_as": s.manager.get_profile(account.user_id).name})
+    return render(request, "me.html", {
+        "notice": notice,
+        "nav": "me",
+        "shown_as": s.manager.get_profile(account.user_id).name,
+        "wants_best_match": s.live.wants_best_match(account.account_id),
+    })
 
 
 @router.get("/me/profile")
@@ -581,6 +594,7 @@ async def me_settings(request: Request, account: Account = Depends(page_member),
     actions.set_account_flags(
         s, account, experiment_opt_out=form.get("experiment_opt_out") == "yes"
     )
+    actions.set_best_match_choice(s, account, form.get("best_match") == "yes")
     return redirect(request, "/me?done=saved")
 
 

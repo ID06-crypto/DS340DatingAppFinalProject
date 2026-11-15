@@ -242,6 +242,57 @@ class LiveStore:
 
     # Real names. Profiles hold the assigned display name.
 
+    # Best matches
+
+    def wants_best_match(self, account_id: str) -> bool:
+        with connect(self.db_path) as conn:
+            row = conn.execute("SELECT opted_in FROM best_match_choices WHERE account_id = ?", (account_id,)).fetchone()
+        return bool(row and row["opted_in"])
+
+    def set_wants_best_match(self, account_id: str, opted_in: bool) -> None:
+        with transaction(self.db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO best_match_choices (account_id, opted_in, updated_at) VALUES (?, ?, ?)
+                ON CONFLICT (account_id) DO UPDATE SET opted_in = excluded.opted_in, updated_at = excluded.updated_at
+                """,
+                (account_id, int(opted_in), to_text(utc_now())),
+            )
+
+    def users_wanting_best_match(self) -> set[str]:
+        """The user_ids of participants who currently want to see their best match."""
+        with connect(self.db_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT a.user_id FROM accounts a JOIN best_match_choices c USING (account_id)
+                WHERE c.opted_in = 1 AND a.user_id IS NOT NULL AND a.role = 'user'
+                """
+            ).fetchall()
+        return {r["user_id"] for r in rows}
+
+    def replace_best_matches(self, pairs: list[tuple[str, str]]) -> None:
+        """Replace every best-match pair at once. Callers check nobody appears twice."""
+        now = to_text(utc_now())
+        with transaction(self.db_path) as conn:
+            conn.execute("DELETE FROM best_matches")
+            conn.executemany(
+                "INSERT INTO best_matches (user_id, match_id, uploaded_at) VALUES (?, ?, ?)",
+                [row for a, b in pairs for row in ((a, b, now), (b, a, now))],
+            )
+
+    def best_match_pairs(self) -> list[tuple[str, str, str]]:
+        """Each pair once, as (user_id, user_id, uploaded_at)."""
+        with connect(self.db_path) as conn:
+            rows = conn.execute(
+                "SELECT user_id, match_id, uploaded_at FROM best_matches WHERE user_id < match_id ORDER BY uploaded_at, user_id"
+            ).fetchall()
+        return [(r["user_id"], r["match_id"], r["uploaded_at"]) for r in rows]
+
+    def best_match_of(self, user_id: str) -> str | None:
+        with connect(self.db_path) as conn:
+            row = conn.execute("SELECT match_id FROM best_matches WHERE user_id = ?", (user_id,)).fetchone()
+        return row["match_id"] if row else None
+
     def real_name(self, user_id: str) -> str | None:
         with connect(self.db_path) as conn:
             row = conn.execute("SELECT real_name FROM private_names WHERE user_id = ?", (user_id,)).fetchone()

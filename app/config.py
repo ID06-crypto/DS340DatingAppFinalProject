@@ -37,7 +37,7 @@ class Settings:
     main_db: Path = LIVE_DIR / "main.db"
     persona_db: Path = LIVE_DIR / "personas.db"
     consent_dir: Path = ROOT / "consent"
-    consent_version: str = "2"
+    consent_version: str = "3"
     match_threshold: float = 7.0
     # Times admins enter, like when rating opens, are read and shown in this time zone.
     study_timezone: str = "America/New_York"

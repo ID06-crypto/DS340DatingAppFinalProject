@@ -68,6 +68,7 @@ def me(account: Account = Depends(current_account), s: Services = Depends(servic
         "experiment_opt_out": account.experiment_opt_out,
         "notify_on_match": account.notify_on_match,
         "paused": account.paused,
+        "wants_best_match": s.live.wants_best_match(account.account_id),
         "profile": s.public_profile(account.user_id, own=True)["profile"] if account.user_id else None,
         "interested_in": sorted(preferences.interested_in) if preferences else None,
         "missing_for_approval": s.missing_for_approval(account),
@@ -99,3 +100,22 @@ def get_preferences(account: Account = Depends(consented_account), s: Services =
 @router.put("/me/preferences")
 def set_preferences(body: PreferencesIn, account: Account = Depends(consented_account), s: Services = Depends(services)) -> dict:
     return {"interested_in": sorted(actions.set_preferences(s, account, body.interested_in))}
+
+
+class BestMatchChoice(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    wants_best_match: bool
+
+
+@router.put("/me/best-match")
+def set_best_match_choice(body: BestMatchChoice, account: Account = Depends(consented_account), s: Services = Depends(services)) -> dict:
+    """Ask, or stop asking, to see your best match after the study."""
+    actions.set_best_match_choice(s, account, body.wants_best_match)
+    return {"wants_best_match": s.live.wants_best_match(account.account_id)}
+
+
+@router.get("/me/best-match")
+def best_match(account: Account = Depends(consented_account), s: Services = Depends(services)) -> dict:
+    """Your best match, once results are out and if you both asked to see it."""
+    found = actions.best_match_for(s, account)
+    return {key: found[key] for key in ("state", "opens_text", "profile", "real_name") if key in found}

@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Best matches{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block content %}
+{% include "admin/_nav.html" %}
+<h1>Best matches</h1>
+{% if notice %}<p class="notice" role="status">{{ notice }}</p>{% endif %}
+{% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+<p class="lede">{{ wanting }} of {{ participants }} participants have asked to see their best match.</p>
+<p>Someone sees their best match, with that person's real name, only when both of them asked to, results are out, both are still approved, and neither has blocked the other. This is checked every time the page loads, so if either person later changes their mind or deletes their account, the pair stops showing.</p>
+
+<h2>1. Get the data</h2>
+<p>Download the <a href="/admin/truth.zip">ground truth</a>. In <code>participants.csv</code>, <code>wants_best_match</code> is 1 for people who asked. Run the algorithm on those people only.</p>
+
+<h2>2. Upload the pairs</h2>
+{% if salt_missing %}
+<p class="notice">Set the EXPORT_SALT environment variable first. The pairs use the participant ids it produces.</p>
+{% else %}
+<p>A CSV with one pair per line, using the participant ids from the ground truth. Each person can be in only one pair. Uploading replaces every pair saved before. If any line is wrong, nothing is saved, and every problem is listed.</p>
+<pre class="math"><code>participant_a,participant_b
+3f9c0a12be47d610,a81d55c09e3f7b24
+...</code></pre>
+<form method="post" action="/admin/best-matches/upload" enctype="multipart/form-data">
+  {% include "partials/csrf.html" %}
+  <label for="pairs">Pairs file (CSV)</label>
+  <input id="pairs" name="pairs" type="file" accept=".csv,text/csv" required>
+  <button type="submit">Upload pairs</button>
+</form>
+{% endif %}
+
+<h2>3. Choose when results come out</h2>
+<p>{% if shown_text %}Results {{ "came" if results_open else "come" }} out on {{ shown_text }}.{% else %}Results are hidden. Nobody sees a best match until you set a time.{% endif %} Set it after rating closes, so seeing results can't change how people rate.</p>
+<form method="post" action="/admin/best-matches/reveal">
+  {% include "partials/csrf.html" %}
+  <label for="results_open_at">Results come out at ({{ timezone }} time)</label>
+  <input id="results_open_at" name="results_open_at" type="datetime-local" value="{{ shown_value }}">
+  <small>Leave it empty to keep results hidden.</small>
+  <button type="submit">Save</button>
+</form>
+
+<h2>Saved pairs</h2>
+{% if pairs %}
+{% if hidden_pairs %}<p class="notice">{{ hidden_pairs }} of these pairs won't be shown, because someone in them no longer wants to see their best match.</p>{% endif %}
+<table>
+  <thead><tr><th scope="col">Person</th><th scope="col">Best match</th><th scope="col">Uploaded (UTC)</th></tr></thead>
+  <tbody>
+    {% for pair in pairs %}
+    <tr>
+      {% for person in pair.people %}<td><code>{{ person.participant_id }}</code> {{ person.shown_as }}{% if not person.wants %} <em>(opted out since)</em>{% endif %}</td>{% endfor %}
+      <td>{{ pair.uploaded_at }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<form method="post" action="/admin/best-matches/clear">
+  {% include "partials/csrf.html" %}
+  <button type="submit" class="quiet">Remove all pairs</button>
+</form>
+{% else %}
+<p>No pairs uploaded yet.</p>
+{% endif %}
+{% endblock %}

@@ -66,7 +66,7 @@ class Env:
 
     def consented(self, email: str) -> TestClient:
         client = self.login(email)
-        assert client.post("/auth/consent", json={"version": "2"}).status_code == 200
+        assert client.post("/auth/consent", json={"version": "3"}).status_code == 200
         return client
 
     def make_admin(self, email: str) -> None:
@@ -259,12 +259,12 @@ def test_admin_emails_get_admin_role_and_auto_approval(env: Env) -> None:
 
 def test_consent_is_required_for_everything_but_auth(env: Env) -> None:
     client = env.login("jane@bu.edu")
-    assert client.get("/auth/consent").json()["version"] == "2"
+    assert client.get("/auth/consent").json()["version"] == "3"
     assert "aren't used to train" in client.get("/auth/consent").json()["text"]
     assert client.post("/me/profile", json=profile_body()).status_code == 403
     assert client.get("/feed/next").status_code == 403
     assert client.post("/auth/consent", json={"version": "0"}).status_code == 409
-    assert client.post("/auth/consent", json={"version": "2"}).status_code == 200
+    assert client.post("/auth/consent", json={"version": "3"}).status_code == 200
     assert client.post("/me/profile", json=profile_body()).status_code == 201
 
 
@@ -289,7 +289,7 @@ def test_approval_requires_consent_profile_and_preferences(env: Env) -> None:
         return response.json()["detail"]["missing"] if response.status_code == 409 else []
 
     assert missing() == ["consent", "profile"]
-    client.post("/auth/consent", json={"version": "2"})
+    client.post("/auth/consent", json={"version": "3"})
     client.post("/me/profile", json=profile_body())
     assert missing() == ["preferences"]
     client.put("/me/preferences", json={"interested_in": "everyone"})
@@ -765,11 +765,11 @@ def test_state_changing_requests_need_a_matching_origin(env: Env) -> None:
     cookies = dict(client.cookies)
     for headers in ({"Origin": "https://evil.example"}, {"Referer": "https://evil.example/page"}, {}):
         hostile = TestClient(env.app, headers=headers, cookies=cookies)
-        assert hostile.post("/auth/consent", json={"version": "2"}).status_code == 403
+        assert hostile.post("/auth/consent", json={"version": "3"}).status_code == 403
         assert hostile.delete("/me").status_code == 403
     assert client.get("/me").status_code == 200  # Not deleted.
     referer_only = TestClient(env.app, headers={"Referer": f"{SITE}/settings"}, cookies=cookies)
-    assert referer_only.post("/auth/consent", json={"version": "2"}).status_code == 200
+    assert referer_only.post("/auth/consent", json={"version": "3"}).status_code == 200
 
 
 def test_security_headers_are_on_every_response(env: Env) -> None:

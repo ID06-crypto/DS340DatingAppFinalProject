@@ -223,6 +223,81 @@ async def controls_save(request: Request, admin: Account = Depends(page_admin), 
     return redirect(request, "/admin/controls")
 
 
+# Best matches: when results come out, and the algorithm's pairs.
+
+MAX_PAIRS_FILE_BYTES = 1_000_000
+
+
+def _best_matches_page(request: Request, s: Services, error: str | None = None, notice: str | None = None, status: int = 200) -> Response:
+    shown = s.controls().results_open_at
+    wanting = s.live.users_wanting_best_match()
+    ids = {user_id: pid for pid, user_id in actions.participant_ids(s).items()} if s.settings.export_salt else {}
+    pairs = []
+    for a, b, uploaded_at in s.live.best_match_pairs():
+        pairs.append({
+            "people": [
+                {"participant_id": ids.get(u, "?"), "shown_as": s.manager.get_profile(u).name, "wants": u in wanting}
+                for u in (a, b)
+            ],
+            "uploaded_at": uploaded_at[:16].replace("T", " "),
+        })
+    return _page(request, "best_matches.html", {
+        "shown_value": f"{s.local_time(shown):%Y-%m-%dT%H:%M}" if shown else "",
+        "shown_text": s.describe_time(shown) if shown else None,
+        "results_open": actions.results_open(s),
+        "timezone": s.settings.study_timezone,
+        "wanting": len(wanting),
+        "participants": len(ids),
+        "pairs": pairs,
+        "hidden_pairs": sum(1 for p in pairs if not all(person["wants"] for person in p["people"])),
+        "salt_missing": not s.settings.export_salt,
+        "error": error,
+        "notice": notice,
+    }, status)
+
+
+@router.get("/best-matches")
+def best_matches(request: Request, admin: Account = Depends(page_admin), s: Services = Depends(services)) -> Response:
+    notice = {"saved": "Saved.", "cleared": "All pairs removed."}.get(request.query_params.get("done", ""))
+    if (count := request.query_params.get("uploaded", "")).isdigit():
+        notice = f"Saved {count} pairs. They replace any you uploaded before."
+    return _best_matches_page(request, s, notice=notice)
+
+
+@router.post("/best-matches/reveal", dependencies=[csrf])
+async def best_matches_reveal(request: Request, admin: Account = Depends(page_admin), s: Services = Depends(services)) -> Response:
+    text = str((await request.form()).get("results_open_at", "")).strip()
+    try:
+        when = datetime.fromisoformat(text).replace(tzinfo=ZoneInfo(s.settings.study_timezone)) if text else None
+    except ValueError:
+        return _best_matches_page(request, s, error="Enter a date and time, or leave it empty to keep results hidden.", status=422)
+    actions.set_results_open(s, admin, when)
+    return redirect(request, "/admin/best-matches?done=saved")
+
+
+@router.post("/best-matches/upload", dependencies=[csrf])
+async def best_matches_upload(request: Request, admin: Account = Depends(page_admin), s: Services = Depends(services)) -> Response:
+    upload = (await request.form()).get("pairs")
+    if upload is None or isinstance(upload, str):
+        return _best_matches_page(request, s, error="Choose a CSV file to upload.", status=422)
+    data = await upload.read(MAX_PAIRS_FILE_BYTES + 1)
+    if len(data) > MAX_PAIRS_FILE_BYTES:
+        return _best_matches_page(request, s, error="That file is too big for a list of pairs.", status=422)
+    try:
+        count = actions.upload_best_matches(s, admin, data.decode("utf-8"))
+    except UnicodeDecodeError:
+        return _best_matches_page(request, s, error="Save the file as a plain CSV (UTF-8) and try again.", status=422)
+    except ActionError as error:
+        return _best_matches_page(request, s, error=error.message, status=error.status)
+    return redirect(request, f"/admin/best-matches?uploaded={count}")
+
+
+@router.post("/best-matches/clear", dependencies=[csrf])
+def best_matches_clear(request: Request, admin: Account = Depends(page_admin), s: Services = Depends(services)) -> Response:
+    actions.clear_best_matches(s, admin)
+    return redirect(request, "/admin/best-matches?done=cleared")
+
+
 @router.get("/audit")
 def audit(request: Request, action: str | None = None, actor: str | None = None, admin: Account = Depends(page_admin), s: Services = Depends(services)) -> Response:
     entries = s.live.audit_entries(action or None, actor or None, limit=500)

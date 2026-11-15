@@ -81,7 +81,7 @@ def test_truth_tables_are_keyed_by_participant_id_with_a_blank_diagonal(people: 
     assert grid["id-W02"]["id-M01"] == ""
     assert tables["scores.csv"][1:] == [["id-M01", "id-W01", "0.500000", ""], ["id-W01", "id-M01", "0.750000", "2026-11-20T10:00:00+00:00"]]
     participants = {row[0]: row for row in tables["participants.csv"][1:]}
-    assert participants["id-W01"][1:] == ["woman", "21-23", 1, 1]
+    assert participants["id-W01"][1:] == ["woman", "21-23", 1, 1, 0]
     files = insights.truth_files(data)
     assert set(files) == {"participants.csv", "scores.csv", "matrix.csv", "README.txt"}
     assert "2 ratings" in files["README.txt"] and "(rating - 1) / 9" in files["README.txt"]

@@ -139,6 +139,27 @@ LIVE_SCHEMA = (
         must_change   INTEGER NOT NULL DEFAULT 0 CHECK (must_change IN (0, 1))
     )
     """,
+    # Whether someone asked, in the consent form or on the Me page, to see their best match
+    # after the study, and to let that person see their real name. Off unless they tick it.
+    """
+    CREATE TABLE IF NOT EXISTS best_match_choices (
+        account_id TEXT PRIMARY KEY REFERENCES accounts (account_id) ON DELETE CASCADE,
+        opted_in   INTEGER NOT NULL CHECK (opted_in IN (0, 1)),
+        updated_at TEXT NOT NULL
+    )
+    """,
+    # The algorithm's best-match pairs, uploaded by an admin. One row per person, so each
+    # pair is two rows and nobody has more than one best match. Deleting either person
+    # removes both rows.
+    """
+    CREATE TABLE IF NOT EXISTS best_matches (
+        user_id     TEXT PRIMARY KEY REFERENCES profiles (user_id) ON DELETE CASCADE,
+        match_id    TEXT NOT NULL REFERENCES profiles (user_id) ON DELETE CASCADE,
+        uploaded_at TEXT NOT NULL,
+        CHECK (user_id <> match_id)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_best_matches_match ON best_matches (match_id)",
     """
     CREATE TABLE IF NOT EXISTS app_settings (
         key   TEXT PRIMARY KEY,

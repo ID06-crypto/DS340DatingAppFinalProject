@@ -10,7 +10,7 @@ It also includes a JSON backend for the live study with about 100 invited BU stu
 | `store.py` | Profiles, private preferences, ratings, runs, and the eligible pool, in `main.db` |
 | `live_schema.py`, `live_store.py` | The live app's tables in `main.db`: accounts, sessions, matches, blocks, reports, impressions, surveys, and the audit log |
 | `app/` | The FastAPI backend for the live app |
-| `consent/v1.md`, `consent/v2.md` | The consent text users agree to, by version. v2 is current. |
+| `consent/v1.md` to `consent/v3.md` | The consent text users agree to, by version. v3 is current, and adds the optional best-match reveal. |
 | `scripts/seed_dev.py` | Creates a few fake approved accounts for local testing |
 | `scripts/migrate_schema.py` | Upgrades databases made before preferences moved off profiles |
 | `personas.py` | Hidden data, in `personas.db`: personas and rating transcripts |
@@ -353,13 +353,22 @@ Open http://localhost:8000 in a browser. Sign in as a seeded user (`dev.user01@b
 | Public | `/`, which explains the project and takes an email, and `/transparency`, which covers what's collected, who sees what, the algorithms, and these rules |
 | Onboarding, in order | Consent, profile, who you'd like to meet, then "under review" until an admin approves you |
 | Discover | One profile at a time, with a 1 to 10 slider and number box and no default value. Shows how many people are left. Report and block are in a menu. Everyone eventually sees every other approved participant, whatever their gender. Asking again shows the same person, so nobody can be skipped, and someone who paused while on screen comes back once they unpause. |
-| Matches | Each match's display name and the date you matched. There's no in-app messaging. Unmatch, block, and report are in a menu. |
-| Me | Edit your profile and preferences, see who you've blocked, set match emails, opt out of the experiment, pause, download your data, or delete your account |
-| Admin | Overview, approvals, users, reports, algorithm comparison, controls, audit log, and export. Each needs a sign-in from the last `ADMIN_STEP_UP_MINUTES`. |
+| Matches | Your best match once results are out (see below), then each match's display name and the date you matched. There's no in-app messaging. Unmatch, block, and report are in a menu. |
+| Me | Edit your profile and preferences, see who you've blocked, ask to see your best match, opt out of the experiment, pause, download your data, or delete your account |
+| Admin | Overview, approvals, users, reports, algorithm comparison, best matches, controls, audit log, and export. Each needs a sign-in from the last `ADMIN_STEP_UP_MINUTES`. |
 
 **Surveys:** "Was this worth your time?" from 1 to 5 appears on Discover when nobody's left, and otherwise after every 25th rating, at most once a day. "Was your match with (name) worth your time?" appears on Matches, once per match, once the match is 3 days old. Both can be dismissed.
 
 **When rating opens:** admins set a date and time on the controls page, in `STUDY_TIMEZONE`. Before it, people can sign up and be approved, but Discover shows when rating opens, and ratings are refused. Leave it empty to open rating now.
+
+**Best matches (optional, consent v3).** People can ask, on the consent form or on Me, to see their best match after the study. Someone sees their best match's real name, study name, and profile only when **both** of them asked, results are out, both are still approved, and neither has blocked the other. All of this is checked each time the page loads, so unticking the box, deleting an account, or a block hides the pair straight away. Admins don't take part, so they can't opt in. To run it:
+
+1. Download the ground truth. `participants.csv` has `wants_best_match`, 1 for people who asked.
+2. Run the algorithm on those people only, and save a CSV with the columns `participant_a,participant_b`, one pair per line, nobody in two pairs.
+3. Upload it on Admin → Best matches. A file with any problem (an unknown id, someone twice, someone who didn't ask) is refused whole, with every problem listed. Uploading replaces earlier pairs.
+4. Set when results come out, after rating closes. Until it's set, nobody sees anything.
+
+Choices, uploads, and the reveal time are all audited. Pairs are stored in `best_matches`, and choices in `best_match_choices`.
 
 ### Ground truth: who likes whom
 
@@ -426,7 +435,7 @@ The export (`/admin/export.csv` and `.json`) has one row per impression. People 
 | `APP_MAIN_DB` | `data/live/main.db` | The live database, kept apart from the simulated users. |
 | `APP_PERSONA_DB` | `data/live/personas.db` | Required by `ProfileManager`. Live users have no personas. |
 | `CONSENT_DIR` | `consent` | Folder of consent texts, named `v<version>.md`. |
-| `CONSENT_VERSION` | `2` | The version users must agree to. Raising it asks everyone to agree again. |
+| `CONSENT_VERSION` | `3` | The version users must agree to. Raising it asks everyone to agree again. |
 | `STUDY_TIMEZONE` | `America/New_York` | The time zone for when rating opens, as admins enter and see it. |
 | `MATCH_THRESHOLD` | `7.0` | Both people must rate each other at least this, on the 1 to 10 scale, to match. |
 | `COOKIE_SECURE` | `true` | Only send the session cookie over HTTPS. Set `false` for local http. |
@@ -483,7 +492,7 @@ People rate from 1 to 10. Ratings are stored on the same 0 to 1 scale as Jev's, 
 
 The live study runs on [Render](https://render.com): one Starter web service ($7 a month) with a 1 GB persistent disk ($0.25 a month) for the database, which comes to about $7.25 a month. `render.yaml` describes it all. The free plan won't work: it has no disk, so the database would be wiped on every restart.
 
-**Before the first deploy**, commit and push everything, including `render.yaml`, `requirements-app.txt`, and `consent/v2.md`. Render builds from GitHub, so anything not pushed won't be there.
+**Before the first deploy**, commit and push everything, including `render.yaml`, `requirements-app.txt`, and the `consent/` folder. Render builds from GitHub, so anything not pushed won't be there.
 
 1. **Create the service.** Sign in to Render with GitHub, and give it access to this repository. Choose **New → Blueprint**, pick the repository, and Render reads `render.yaml`. It asks for two values:
    - `SITE_URL`: `https://bu-matching-study.onrender.com`. If Render gives the service a different address, because that name is taken, change `SITE_URL` to match afterwards, in **Environment**. It must match exactly, or every form is refused.

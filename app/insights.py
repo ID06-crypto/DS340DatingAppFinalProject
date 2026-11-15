@@ -62,6 +62,7 @@ class Person:
     religion: str | None
     interests: list[str]
     participant_id: str | None = None  # Set when a salt is given.
+    wants_best_match: bool = False  # Asked to see their best match after the study.
 
 
 @dataclass
@@ -101,9 +102,10 @@ class Insights:
 
 _PEOPLE = """
     SELECT p.user_id, p.gender, p.age, p.height_cm, p.school, p.major, p.job, p.looking_for,
-           p.religion, p.interests
+           p.religion, p.interests, COALESCE(c.opted_in, 0) AS wants_best_match
     FROM profiles p
     JOIN accounts a ON a.user_id = p.user_id
+    LEFT JOIN best_match_choices c ON c.account_id = a.account_id
     WHERE a.status = 'approved' AND a.role = 'user' AND a.experiment_opt_out = 0 AND p.agent = 0
     ORDER BY a.created_at, p.user_id
 """
@@ -134,6 +136,7 @@ def load(db_path: str | Path, positive_threshold: float, salt: str = "") -> Insi
             religion=r["religion"],
             interests=json.loads(r["interests"]),
             participant_id=pseudonym(r["user_id"], salt) if salt else None,
+            wants_best_match=bool(r["wants_best_match"]),
         ))
     by_id = {p.user_id: p for p in people}
     ratings = [
@@ -389,8 +392,9 @@ def truth_tables(data: Insights) -> dict[str, list[list[Any]]]:
         given[r.rater.user_id] += 1
         received[r.target.user_id] += 1
         scores[(r.rater.participant_id, r.target.participant_id)] = r.score
-    participants = [["participant_id", "gender", "age_band", "ratings_given", "ratings_received"]] + [
-        [p.participant_id, p.gender, age_band(p.age), given[p.user_id], received[p.user_id]] for p in people
+    participants = [["participant_id", "gender", "age_band", "ratings_given", "ratings_received", "wants_best_match"]] + [
+        [p.participant_id, p.gender, age_band(p.age), given[p.user_id], received[p.user_id], int(p.wants_best_match)]
+        for p in people
     ]
     ordered = sorted(data.ratings, key=lambda r: (r.rater.participant_id, r.target.participant_id))
     score_rows = [["rater_id", "target_id", "score", "rated_at"]] + [
@@ -425,7 +429,8 @@ with it and database access, ids can be traced back to accounts.
 score: from 0 to 1, the scale the simulated agents' ratings use. People rate from 1 to 10,
 and score = (rating - 1) / 9. Scores aren't normalized per rater.
 
-participants.csv  participant_id, gender, age_band, ratings_given, ratings_received
+participants.csv  participant_id, gender, age_band, ratings_given, ratings_received,
+                  wants_best_match (1 if they asked to see their best match after the study)
 scores.csv        rater_id, target_id, score, rated_at (UTC, ISO 8601). One row per rating.
 matrix.csv        Rows are raters and columns are the people they rated, both by
                   participant_id. A blank cell means not rated yet. The diagonal is blank.
@@ -434,6 +439,10 @@ To compare a model with these: predict a score from 0 to 1 for each (rater_id, t
 in scores.csv, and compare, for example with mean absolute error, rank correlation per
 rater, or precision at k. A pair is "liked" at a score of {threshold:.4f} or higher
 (7.0 on the 1 to 10 scale), and "mutual" when both directions are.
+
+Best matches: to show people their best match, run the algorithm on the participants with
+wants_best_match = 1 only, and upload a CSV with the columns participant_a,participant_b
+(one pair per line, nobody in two pairs) on the admin Best matches page.
 """
 
 
