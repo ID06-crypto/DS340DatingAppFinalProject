@@ -144,7 +144,7 @@ document.addEventListener("DOMContentLoaded", function () {
     function name(k) { return h.spec.labels[k] + (ids[k] ? " (" + ids[k] + ")" : ""); }
     var a = name(i), b = name(j), v = h.spec.values[i][j];
     if (canvas.getAttribute("data-kind") === "reciprocal") {
-      return v === null ? a + " and " + b + ": not both rated yet" : a + " + " + b + ": " + v.toFixed(2) + " of 2";
+      return v === null ? a + " and " + b + ": not both rated yet" : a + " and " + b + ": " + v.toFixed(2) + " mutual";
     }
     return v === null ? a + " hasn't rated " + b + " yet" : a + " rated " + b + ": " + v.toFixed(2);
   }

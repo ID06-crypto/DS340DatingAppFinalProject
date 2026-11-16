@@ -42,8 +42,20 @@
 <div class="heatmap"><canvas data-heatmap="{{ interest_map }}" data-kind="interest" role="img" aria-label="Heat map of every participant's score for every other participant, from 0 to 1, with raters as rows and the people they rated as columns."></canvas></div>
 
 <h2>Reciprocal interest</h2>
-<p>For each pair, the sum of both people's scores for each other, from 0 to 2. It's filled in only where both have rated each other, so the grid is symmetric. Dark squares are pairs who both liked each other.</p>
-<div class="heatmap"><canvas data-heatmap="{{ reciprocal_map }}" data-kind="reciprocal" role="img" aria-label="Symmetric heat map of the sum of each pair's scores for each other, from 0 to 2, where both have rated."></canvas></div>
+<p>For each pair, how much they like each other, from 0 to 1: the product of both people's scores for each other. It's high only when <em>both</em> scores are high, so a pair where one person is keen and the other isn't stays pale. It's filled in only where both have rated each other, so the grid is symmetric.</p>
+<div class="heatmap"><canvas data-heatmap="{{ reciprocal_map }}" data-kind="reciprocal" role="img" aria-label="Symmetric heat map of each pair's mutual interest, the product of their scores for each other, from 0 to 1, where both have rated."></canvas></div>
+<p class="math">reciprocal cell (<var>i</var>, <var>j</var>) = <var>s</var><sub>ij</sub> × <var>s</var><sub>ji</sub>, &nbsp; 0 ≤ cell ≤ 1</p>
+<p>A probabilistic AND: if each score is the chance that person likes the other, and the two are independent, the product is the chance they <em>both</em> do. It's 0 if either person gave 0, and never more than the smaller score. For example:</p>
+<table class="worked">
+  <thead><tr><th scope="col"><var>s</var><sub>ij</sub></th><th scope="col"><var>s</var><sub>ji</sub></th><th scope="col">Product (this map)</th><th scope="col">Sum (for comparison)</th></tr></thead>
+  <tbody>
+    <tr><td>0.9</td><td>0.9</td><td>0.81</td><td>1.8 of 2</td></tr>
+    <tr><td>0.5</td><td>0.5</td><td>0.25</td><td>1.0 of 2</td></tr>
+    <tr><td>1.0</td><td>0.2</td><td>0.20</td><td>1.2 of 2</td></tr>
+    <tr><td>1.0</td><td>0.0</td><td>0.00</td><td>1.0 of 2</td></tr>
+  </tbody>
+</table>
+<p>A sum treats one person who is very keen and one who isn't interested at all (1.0 and 0.0) the same as two people who are lukewarm (0.5 and 0.5). The product doesn't. Because products are small, this map looks paler than the one above: two people who each gave 0.5 show as 0.25.</p>
 
 {% if not data.ratings %}
 <h2>Scores and what goes with them</h2>
@@ -117,8 +129,9 @@
   <p>People rate from 1 to 10, and the score is stored from 0 to 1, the scale the simulated agents' ratings use. A score counts as <strong>liked</strong> when <var>s</var> ≥ <var>t</var>, where <var>t</var> = (POSITIVE_THRESHOLD − 1) / 9 = {{ threshold|round(3) }}.</p>
 
   <h3>Heat maps</h3>
-  <p class="math">interest cell (<var>i</var>, <var>j</var>) = <var>s</var><sub>ij</sub><br>reciprocal cell (<var>i</var>, <var>j</var>) = <var>s</var><sub>ij</sub> + <var>s</var><sub>ji</sub>, only when both exist, so 0 ≤ cell ≤ 2</p>
-  <p>Shade is proportional to the value, from paper (0) to ink (1, or 2 for reciprocal). Within each gender, people are ordered by the mean score they received, <var>s̄</var><sub>j</sub> = (1 / <var>n</var><sub>j</sub>) Σ<sub>i</sub> <var>s</var><sub>ij</sub>. A pair "both liked each other" when <var>s</var><sub>ij</sub> ≥ <var>t</var> and <var>s</var><sub>ji</sub> ≥ <var>t</var>.</p>
+  <p class="math">interest cell (<var>i</var>, <var>j</var>) = <var>s</var><sub>ij</sub><br>reciprocal cell (<var>i</var>, <var>j</var>) = <var>s</var><sub>ij</sub> × <var>s</var><sub>ji</sub>, only when both exist, so 0 ≤ cell ≤ 1</p>
+  <p>The reciprocal cell is a probabilistic AND: the chance both people like each other, if each score is a probability and the two are independent. It's the same rule the simulations use to count expected matches.</p>
+  <p>Shade is proportional to the value, from paper (0) to ink (1). Within each gender, people are ordered by the mean score they received, <var>s̄</var><sub>j</sub> = (1 / <var>n</var><sub>j</sub>) Σ<sub>i</sub> <var>s</var><sub>ij</sub>. A pair "both liked each other" when <var>s</var><sub>ij</sub> ≥ <var>t</var> and <var>s</var><sub>ji</sub> ≥ <var>t</var>.</p>
 
   <h3>Distributions and the liking table</h3>
   <p class="math">share in bin <var>b</var> = (number of the group's scores with <var>b</var>/10 ≤ <var>s</var> &lt; (<var>b</var>+1)/10) / (number of the group's scores)<br>share liked = (number of ratings with <var>s</var> ≥ <var>t</var>) / (number of ratings), for each rater group and rated group</p>

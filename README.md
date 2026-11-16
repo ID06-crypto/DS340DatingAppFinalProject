@@ -408,7 +408,7 @@ The point of the live study is a true record of how much each participant likes 
 **The Users page** (`/admin/users`, computed in `app/insights.py`) has:
 
 - A heat map of every participant's score for every other participant, grouped by gender and ordered by mean score received, with hatching where nobody has rated yet.
-- A heat map of reciprocal interest: the sum of both people's scores for each other, from 0 to 2, where both have rated.
+- A heat map of reciprocal interest: the product of both people's scores for each other, s_ij × s_ji, from 0 to 1, where both have rated. It's a probabilistic AND (the chance both like each other, if the scores are independent probabilities), unlike a sum, which acts like an OR. The formula and a worked example are under the map.
 - The distributions of scores given and received by each gender, and how often each gender liked each gender.
 - Mean score by height, age, height difference, age gap, looking for, major, job, school, religion, shared interests, and each interest, with Pearson r and the least-squares slope, or η². The page lists the formulas. These are descriptive, since one person's ratings aren't independent.
 

@@ -175,13 +175,27 @@ def _summary(people: list[Person], ratings: list[Rated], threshold: float) -> di
     }
 
 
+def reciprocal_score(a: float, b: float) -> float:
+    """How much two people like each other, from 0 to 1: the product of their scores for
+    each other, a * b.
+
+    It's a probabilistic AND. Reading each score as the chance that person likes the other,
+    and the two as independent, a * b is the chance they both do. It's high only when both
+    scores are high, and 0 if either is 0, so one keen person can't carry a pair: (1.0, 0.0)
+    gives 0, where a sum gives 1 of 2. It's the same rule the simulations use to count
+    expected matches. It's never more than the smaller score, so values look paler than
+    single ratings: (0.5, 0.5) gives 0.25.
+    """
+    return a * b
+
+
 def _maps(people: list[Person], ratings: list[Rated]) -> tuple[dict[str, Any], dict[str, Any]]:
     """Two square grids over the same people, ordered by gender and then by mean score
     received, so the most liked people in each group come first.
 
-    interest[i][j] is how person i rated person j, from 0 to 1. reciprocal[i][j] is the sum
-    of both directions, from 0 to 2, and only where both have rated each other. Missing
-    cells are None.
+    interest[i][j] is how person i rated person j, from 0 to 1. reciprocal[i][j] combines
+    both directions with reciprocal_score, also from 0 to 1, and only where both have rated
+    each other. Missing cells are None.
     """
     scores = {(r.rater.user_id, r.target.user_id): r.score for r in ratings}
     received: dict[str, list[float]] = defaultdict(list)
@@ -197,7 +211,7 @@ def _maps(people: list[Person], ratings: list[Rated]) -> tuple[dict[str, Any], d
     ids = [p.user_id for p in ordered]
     interest = [[_round(scores.get((a, b))) for b in ids] for a in ids]
     reciprocal = [
-        [_round(scores[(a, b)] + scores[(b, a)]) if (a, b) in scores and (b, a) in scores else None for b in ids]
+        [_round(reciprocal_score(scores[(a, b)], scores[(b, a)])) if (a, b) in scores and (b, a) in scores else None for b in ids]
         for a in ids
     ]
     axes = {
@@ -205,7 +219,7 @@ def _maps(people: list[Person], ratings: list[Rated]) -> tuple[dict[str, Any], d
         "ids": [p.participant_id for p in ordered],
         "groups": [GENDER_CODE.get(p.gender, "?") for p in ordered],
     }
-    return ({**axes, "values": interest, "max": 1}, {**axes, "values": reciprocal, "max": 2})
+    return ({**axes, "values": interest, "max": 1}, {**axes, "values": reciprocal, "max": 1})
 
 
 def _round(value: float | None) -> float | None:

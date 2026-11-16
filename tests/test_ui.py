@@ -486,7 +486,7 @@ def test_users_page_shows_codes_not_names_leaves_out_opted_out_and_is_audited(en
     assert sorted(interest["labels"]) == ["M01", "W01"]  # Cora opted out, so she isn't here.
     assert {v for row in interest["values"] for v in row} == {None, 0.889}
     reciprocal = json.loads(unescape(re.search(r'data-heatmap="([^"]+)" data-kind="reciprocal"', response.text).group(1)))
-    assert {v for row in reciprocal["values"] for v in row} == {None, 1.778}
+    assert {v for row in reciprocal["values"] for v in row} == {None, 0.79}  # 0.889 × 0.889
     assert "Pairs who both liked each other</dt><dd>1 " in response.text
     assert "How these numbers are calculated" in html and "Pearson correlation" in html and "η²" in html
     entries = env.s.live.audit_entries(action="view_user_insights")

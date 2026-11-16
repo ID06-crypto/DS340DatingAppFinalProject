@@ -15,7 +15,7 @@ def people() -> list[Person]:
     return [person("W01", "woman"), person("W02", "woman", height_cm=160), person("M01", "man", height_cm=185), person("N01", "nonbinary")]
 
 
-def test_maps_are_grouped_by_gender_and_reciprocal_is_the_symmetric_sum(people: list[Person]) -> None:
+def test_maps_are_grouped_by_gender_and_reciprocal_is_the_symmetric_product(people: list[Person]) -> None:
     w1, w2, m1, n1 = people
     ratings = [Rated(w1, m1, 0.8), Rated(m1, w1, 0.6), Rated(w1, w2, 0.2), Rated(w2, m1, 1.0)]
     data = insights.compute(people, ratings, positive_threshold=0.6)
@@ -28,9 +28,9 @@ def test_maps_are_grouped_by_gender_and_reciprocal_is_the_symmetric_sum(people: 
     assert interest["values"][index["M01"]][index["W01"]] == 0.6
     assert interest["values"][index["W01"]][index["W01"]] is None
     assert interest["values"][index["N01"]][index["W01"]] is None
-    assert reciprocal["values"][index["W01"]][index["M01"]] == reciprocal["values"][index["M01"]][index["W01"]] == 1.4
+    assert reciprocal["values"][index["W01"]][index["M01"]] == reciprocal["values"][index["M01"]][index["W01"]] == 0.48
     assert reciprocal["values"][index["W01"]][index["W02"]] is None  # Only one direction rated.
-    assert (interest["max"], reciprocal["max"]) == (1, 2)
+    assert (interest["max"], reciprocal["max"]) == (1, 1)
     summary = data.summary
     assert (summary["people"], summary["ratings"], summary["possible"]) == (4, 4, 12)
     assert (summary["pairs_both_rated"], summary["pairs_both_positive"]) == (1, 1)
@@ -90,3 +90,17 @@ def test_truth_tables_are_keyed_by_participant_id_with_a_blank_diagonal(people: 
 def test_truth_tables_need_participant_ids(people: list[Person]) -> None:
     with pytest.raises(ValueError):
         insights.truth_tables(insights.compute(people, [], 0.6))
+
+
+@pytest.mark.parametrize("a, b, expected", [
+    (0.9, 0.9, 0.81),
+    (0.5, 0.5, 0.25),
+    (1.0, 0.0, 0.0),   # One person not interested: no mutual interest, however keen the other.
+    (1.0, 0.2, 0.2),
+    (0.0, 0.0, 0.0),
+    (0.6, 0.8, 0.48),
+])
+def test_reciprocal_score_is_an_and_not_an_or(a: float, b: float, expected: float) -> None:
+    assert insights.reciprocal_score(a, b) == pytest.approx(expected, abs=1e-3)
+    assert insights.reciprocal_score(a, b) == insights.reciprocal_score(b, a)
+    assert insights.reciprocal_score(a, b) <= min(a, b)
