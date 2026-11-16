@@ -16,7 +16,7 @@
 <form method="post" action="/me/settings">
   {% include "partials/csrf.html" %}
   <label><input type="checkbox" name="experiment_opt_out" value="yes" aria-describedby="opt-out-help" {% if account.experiment_opt_out %}checked{% endif %}> <span>Opt out of the experiment<small id="opt-out-help">If you opt out, you always get the default way of choosing who you see, instead of a randomly chosen algorithm, and your data is left out of all analysis and exports. Everything else works the same.</small></span></label>
-  <label><input type="checkbox" name="best_match" value="yes" aria-describedby="best-match-help" {% if wants_best_match %}checked{% endif %}> <span>After the study, show me my best match, and show them my real name<small id="best-match-help">The algorithm pairs people who both ticked this. You see each other's real name and profile only if you both still have it ticked when results come out. If you opt out of the experiment, you won't get a best match.</small></span></label>
+  <label><input type="checkbox" name="best_match" value="yes" aria-describedby="best-match-help" {% if wants_best_match %}checked{% endif %}> <span>After the study, show me my best match, and show them my real name<small id="best-match-help">The algorithm pairs people who both said yes. You see each other's real name and profile only if you both still have this ticked when results come out. If you opt out of the experiment, you won't get a best match.</small></span></label>
   <button type="submit">Save settings</button>
 </form>
 

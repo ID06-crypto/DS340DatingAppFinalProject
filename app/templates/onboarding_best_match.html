@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Your best match{% endblock %}
+{% block content %}
+<p class="kicker">You're approved. One question before you start</p>
+<h1>Do you want to see your best match?</h1>
+<p>After rating closes, our algorithm pairs people who said yes here. If you and the person you're paired with <strong>both</strong> said yes, you'll each see the other's <strong>real name</strong>, study name, and profile on the Matches page.</p>
+<ul>
+  <li>You only see their real name if they also said yes, and they only see yours if you did. If only one of you said yes, neither of you sees the other.</li>
+  <li>Neither of you sees the other's email or ratings, and there's no messaging.</li>
+  <li>Being someone's best match suggests you rated each other highly.</li>
+  <li>Our group is small, so someone might recognize you from your profile.</li>
+  <li>Saying no changes nothing else about taking part. You can change your answer any time on the Me page.</li>
+</ul>
+<form method="post" action="/onboarding/best-match">
+  {% include "partials/csrf.html" %}
+  <fieldset {% if error %}aria-describedby="best-match-error" aria-invalid="true"{% endif %}>
+    <legend>Show me my best match after the study, and show them my real name</legend>
+    <label><input type="radio" name="best_match" value="yes" required> Yes, if they say yes too</label>
+    <label><input type="radio" name="best_match" value="no"> No, keep my name private</label>
+  </fieldset>
+  {% if error %}<p class="error" id="best-match-error">{{ error }}</p>{% endif %}
+  <button type="submit">Continue</button>
+</form>
+{% endblock %}

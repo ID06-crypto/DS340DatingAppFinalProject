@@ -38,7 +38,26 @@ document.addEventListener("DOMContentLoaded", function () {
     spec.options = spec.options || {};
     spec.options.animation = reduceMotion ? false : spec.options.animation;
     spec.options.maintainAspectRatio = false;
-    new Chart(canvas, spec);
+    // Sideways bar charts get taller with more rows, so every label fits.
+    if (spec.rowHeight) {
+      canvas.parentElement.style.height = (spec.data.labels.length * spec.rowHeight + 90) + "px";
+    }
+    var views = spec.views;
+    delete spec.views;
+    delete spec.rowHeight;
+    var chart = new Chart(canvas, spec);
+    // A switch between versions of the same chart, like all ratings or only some.
+    var toggle = canvas.id && views && document.querySelector('[data-switch-for="' + canvas.id + '"]');
+    if (toggle) {
+      var caption = document.querySelector('[data-caption-for="' + canvas.id + '"]');
+      toggle.addEventListener("change", function (event) {
+        var view = views[event.target.value];
+        if (!view) { return; }
+        chart.data.datasets[0].data = view.data;
+        chart.update();
+        if (caption) { caption.textContent = view.caption; }
+      });
+    }
   });
 });
 

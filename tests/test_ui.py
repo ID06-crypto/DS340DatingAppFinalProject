@@ -95,7 +95,8 @@ def test_onboarding_order_and_pending_lock(env: Env) -> None:
     assert me["interests"] == ["hiking", "chess"]
     assert me["religion"] is None
     assert browser.get("/discover").headers["location"] == "/onboarding/preferences"
-    browser.post("/onboarding/preferences", data={"csrf_token": csrf, "interested_in": "everyone"})
+    saved = browser.post("/onboarding/preferences", data={"csrf_token": csrf, "interested_in": "everyone"})
+    assert saved.headers["location"] == "/pending"
     assert browser.get("/discover").headers["location"] == "/pending"
     pending = browser.get("/pending")
     assert "Your profile is under review." in pending.text
@@ -765,17 +766,20 @@ def test_every_admin_page_works_with_people_but_no_ratings(env: Env, path: str) 
     assert admin_page(env).get(path).status_code == 200, path
 
 
-@pytest.mark.parametrize("step", ["/onboarding/consent", "/onboarding/profile", "/onboarding/preferences", "/pending"])
+@pytest.mark.parametrize("step", ["/onboarding/consent", "/onboarding/profile", "/onboarding/preferences", "/pending", "/onboarding/best-match"])
 def test_people_partway_through_signing_up_can_sign_out(env: Env, step: str) -> None:
     """A browser stays signed in for SESSION_DAYS, so coming back resumes sign-up. Every
     sign-up step must offer Sign out, or nobody else can sign in on that browser."""
     client = env.login("half@bu.edu")
     if step != "/onboarding/consent":
         client.post("/auth/consent", json={"version": "3"})
-    if step in ("/onboarding/preferences", "/pending"):
+    if step in ("/onboarding/preferences", "/pending", "/onboarding/best-match"):
         assert client.post("/me/profile", json=profile_body()).status_code in (200, 201)
-    if step == "/pending":
+    if step in ("/pending", "/onboarding/best-match"):
         assert client.put("/me/preferences", json={"interested_in": ["woman"]}).status_code in (200, 201)
+    if step == "/onboarding/best-match":  # Asked once approved.
+        account_id = env.s.live.account_for_email("half@bu.edu").account_id
+        assert env.admin().post(f"/admin/accounts/{account_id}/approve").status_code == 200
     page = client.get(step, headers={"Accept": "text/html"})
     assert page.status_code == 200 and str(page.url).endswith(step), (step, page.url)
     assert "Sign out" in page.text
@@ -868,3 +872,19 @@ def test_a_new_site_starts_out_waiting(tmp_path: Path) -> None:
     settings = Settings(site_url=SITE, admin_emails=(ADMIN_EMAIL,), main_db=tmp_path / "m.db", persona_db=tmp_path / "p.db", cookie_secure=False)
     app = create_app(settings)
     assert app.state.services.controls().matching_started is False
+
+
+def test_users_page_opens_with_people_scores_and_progress_charts(env: Env) -> None:
+    a, a_id = member(env, "a@bu.edu", "man", ("woman",))
+    b, b_id = member(env, "b@bu.edu", "woman", ("man",))
+    actions.rate(env.s, env.s.live.account_for_user(a_id), actions.next_impression(env.s, env.s.live.account_for_user(a_id)).impression.impression_id, 7.3)
+    html = admin_page(env).get("/admin/users").text
+    assert "Pairs who rated each other" not in html
+    charts = {m.group(1): json.loads(unescape(m.group(2))) for m in re.finditer(r'<canvas (?:id="([^"]*)" )?data-chart="([^"]+)"', html) if m.group(1)}
+    score = charts["score-chart"]
+    counts = dict(zip(score["data"]["labels"], score["views"]["all"]["data"]))
+    assert counts["7.3"] == 1 and sum(counts.values()) == 1
+    assert sum(score["views"]["interested"]["data"]) == 1  # A straight man rating a woman.
+    assert 'data-switch-for="score-chart"' in html and 'value="interested"' in html
+    assert "1 of 2 ratings done" in html
+    assert "Rating progress" in html and "People</h2>" in html

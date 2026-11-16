@@ -101,6 +101,9 @@ def next_onboarding_step(s: Services, account: Account) -> str | None:
         return "/onboarding/preferences"
     if account.status != "approved":
         return "/pending"
+    if not s.live.answered_best_match(account.account_id):
+        # After approval, right before rating: an explicit yes or no, never a default.
+        return "/onboarding/best-match"
     return None
 
 

@@ -104,6 +104,7 @@ class Env:
         user_id = created.json()["profile"]["user_id"]
         body = {"interested_in": interested_in if isinstance(interested_in, str) else list(interested_in)}
         assert client.put("/me/preferences", json=body).status_code == 200
+        assert client.put("/me/best-match", json={"wants_best_match": False}).status_code == 200
         if approve:
             response = self.admin().post(f"/admin/accounts/{self.account_id(client)}/approve")
             assert response.status_code == 200, response.text

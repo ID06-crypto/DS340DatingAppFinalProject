@@ -63,6 +63,7 @@ class Person:
     interests: list[str]
     participant_id: str | None = None  # Set when a salt is given.
     wants_best_match: bool = False  # Asked to see their best match after the study.
+    interested_in: frozenset[str] = frozenset()  # Their private gender preferences.
 
 
 @dataclass
@@ -98,6 +99,7 @@ class Insights:
     gender_received: dict[str, Any] = field(default_factory=dict)
     liking: list[dict[str, Any]] = field(default_factory=list)
     effects: list[Effect] = field(default_factory=list)
+    overview: dict[str, Any] = field(default_factory=dict)
 
 
 _PEOPLE = """
@@ -118,6 +120,9 @@ def load(db_path: str | Path, positive_threshold: float, salt: str = "") -> Insi
         raw = conn.execute(
             "SELECT rater_id, target_id, score, timestamp FROM ratings WHERE run_id = ?", (LIVE_RUN_ID,)
         ).fetchall()
+        wanted: dict[str, set[str]] = defaultdict(set)
+        for row in conn.execute("SELECT user_id, gender FROM preferences"):
+            wanted[row["user_id"]].add(row["gender"])
     counters: dict[str, int] = defaultdict(int)
     people = []
     for r in rows:
@@ -137,6 +142,7 @@ def load(db_path: str | Path, positive_threshold: float, salt: str = "") -> Insi
             interests=json.loads(r["interests"]),
             participant_id=pseudonym(r["user_id"], salt) if salt else None,
             wants_best_match=bool(r["wants_best_match"]),
+            interested_in=frozenset(wanted[r["user_id"]]),
         ))
     by_id = {p.user_id: p for p in people}
     ratings = [
@@ -155,7 +161,60 @@ def compute(people: list[Person], ratings: list[Rated], positive_threshold: floa
     result.gender_received = _distribution(ratings, lambda r: r.target.gender)
     result.liking = _liking(ratings, positive_threshold)
     result.effects = _effects(ratings)
+    result.overview = _overview(people, ratings)
     return result
+
+
+# The first section of the Users page: who's here, how scores are spread, and progress.
+
+RATING_STEPS = [round(1 + i / 10, 1) for i in range(91)]  # 1.0, 1.1, ... 10.0, as people type them.
+
+
+def to_rating(score: float) -> float:
+    """A stored 0 to 1 score back on the 1 to 10 scale, to the 0.1 step people rate in."""
+    return min(10.0, max(1.0, round(1 + 9 * score, 1)))
+
+
+def interested(r: Rated) -> bool:
+    """Whether the rater said they're interested in the rated person's gender: a straight man
+    rating a woman, a gay man rating a man, a bisexual person rating anyone, and so on."""
+    return r.target.gender in r.rater.interested_in
+
+
+def _score_counts(ratings: list[Rated]) -> dict[str, Any]:
+    counts = dict.fromkeys(RATING_STEPS, 0)
+    for r in ratings:
+        counts[to_rating(r.score)] += 1
+    scores = [r.score for r in ratings]
+    return {
+        "counts": list(counts.values()),
+        "n": len(ratings),
+        "mean_10": round(1 + 9 * statistics.fmean(scores), 2) if scores else None,
+        "mean": round(statistics.fmean(scores), 3) if scores else None,
+    }
+
+
+def _overview(people: list[Person], ratings: list[Rated]) -> dict[str, Any]:
+    present = [g for g in GENDER_ORDER if any(p.gender == g for p in people)]
+    given: dict[str, int] = defaultdict(int)
+    for r in ratings:
+        given[r.rater.user_id] += 1
+    ordered = sorted(people, key=lambda p: (GENDER_ORDER.index(p.gender) if p.gender in GENDER_ORDER else 9, p.code))
+    others = max(len(people) - 1, 0)
+    return {
+        "genders": {"labels": [GENDER_PLURAL[g] for g in present], "counts": [sum(p.gender == g for p in people) for g in present]},
+        "scores": {
+            "labels": [f"{step:.1f}" for step in RATING_STEPS],
+            "all": _score_counts(ratings),
+            "interested": _score_counts([r for r in ratings if interested(r)]),
+        },
+        "progress": {
+            "labels": [p.code for p in ordered],
+            "rated": [given[p.user_id] for p in ordered],
+            "left": [max(others - given[p.user_id], 0) for p in ordered],
+            "finished": sum(1 for p in ordered if others and given[p.user_id] >= others),
+        },
+    }
 
 
 def _summary(people: list[Person], ratings: list[Rated], threshold: float) -> dict[str, Any]:

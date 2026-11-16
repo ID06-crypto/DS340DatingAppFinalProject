@@ -249,6 +249,11 @@ class LiveStore:
             row = conn.execute("SELECT opted_in FROM best_match_choices WHERE account_id = ?", (account_id,)).fetchone()
         return bool(row and row["opted_in"])
 
+    def answered_best_match(self, account_id: str) -> bool:
+        """Whether they've said yes or no. Nobody starts out with an answer."""
+        with connect(self.db_path) as conn:
+            return conn.execute("SELECT 1 FROM best_match_choices WHERE account_id = ?", (account_id,)).fetchone() is not None
+
     def set_wants_best_match(self, account_id: str, opted_in: bool) -> None:
         with transaction(self.db_path) as conn:
             conn.execute(

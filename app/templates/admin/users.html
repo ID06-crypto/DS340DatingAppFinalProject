@@ -13,9 +13,33 @@
   <dt>Participants</dt><dd>{{ sm.people }}{% if sm.by_gender %}: {% for g, n in sm.by_gender.items() %}{{ n }} {{ g|lower }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}</dd>
   <dt>Ratings</dt><dd>{{ sm.ratings }} of {{ sm.possible }} possible{% if sm.coverage is not none %} ({{ (sm.coverage * 100)|round(1) }}%){% endif %}</dd>
   <dt>Mean score</dt><dd>{% if sm.mean_score is none %}n/a{% else %}{{ sm.mean_score|round(3) }}{% endif %}</dd>
-  <dt>Pairs who rated each other</dt><dd>{{ sm.pairs_both_rated }}</dd>
   <dt>Pairs who both liked each other</dt><dd>{{ sm.pairs_both_positive }} (both scores {{ threshold|round(3) }} or higher, which is {{ threshold_10 }} on the 1 to 10 scale)</dd>
 </dl>
+
+{% if data.people %}
+{% set ov = data.overview %}
+<div class="overview-charts">
+  <figure>
+    <h2>People</h2>
+    <div class="chart-box short"><canvas data-chart="{{ gender_chart }}" role="img" aria-label="Bar chart of how many participants there are of each gender: {% for label in ov.genders.labels %}{{ ov.genders.counts[loop.index0] }} {{ label|lower }}{% if not loop.last %}, {% endif %}{% endfor %}."></canvas></div>
+  </figure>
+  <figure>
+    <h2>Rating progress</h2>
+    <p class="counts">{{ sm.ratings }} of {{ sm.possible }} ratings done{% if sm.coverage is not none %} ({{ (sm.coverage * 100)|round(1) }}%){% endif %}. {{ ov.progress.finished }} of {{ sm.people }} people have rated everyone.</p>
+    <div class="chart-box"><canvas data-chart="{{ progress_chart }}" role="img" aria-label="Sideways bar chart, one bar per participant, showing how many people they've rated and how many are left."></canvas></div>
+  </figure>
+</div>
+
+<h2>Scores</h2>
+<fieldset class="switch" data-switch-for="score-chart">
+  <legend>Show</legend>
+  <label><input type="radio" name="score-view" value="all" checked> Every rating</label>
+  <label><input type="radio" name="score-view" value="interested"> Only ratings of a gender the rater is interested in</label>
+</fieldset>
+<p class="chart-caption" data-caption-for="score-chart" aria-live="polite">{{ score_captions.all }}</p>
+<div class="chart-box"><canvas id="score-chart" data-chart="{{ score_chart }}" role="img" aria-label="Bar chart of how many ratings were given at each value from 1.0 to 10.0."></canvas></div>
+<p><small>"Interested" uses each rater's private answer to who they're interested in. A straight man's ratings of women count, but not his ratings of men; a gay man's ratings of men count; a bisexual person's ratings of anyone count. Everyone rates everyone, so ratings of people outside someone's interest pull the overall scores down. Scores are shown as people gave them, from 1 to 10; they're stored as (rating − 1) / 9.</small></p>
+{% endif %}
 
 {% if not data.people %}
 <p class="notice">Nobody's here yet. Approved participants appear once they've joined.</p>

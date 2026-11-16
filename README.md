@@ -351,7 +351,7 @@ Open http://localhost:8000 in a browser. Sign in as a seeded user (`dev.user01@b
 | Area | What's there |
 | --- | --- |
 | Public | `/`, which explains the project and takes an email, and `/transparency`, which covers what's collected, who sees what, the algorithms, and these rules |
-| Onboarding, in order | Consent, profile, who you'd like to meet, then "under review" until an admin approves you |
+| Onboarding, in order | Consent, profile, who you'd like to meet, then "under review" until an admin approves you. Once approved, and before their first profile, everyone answers yes or no to seeing their best match. |
 | Discover | One profile at a time, with a 1 to 10 slider and number box and no default value. Shows how many people are left. Report and block are in a menu. Everyone eventually sees every other approved participant, whatever their gender. Asking again shows the same person, so nobody can be skipped, and someone who paused while on screen comes back once they unpause. |
 | Matches | Your best match once results are out (see below), then each match's display name and the date you matched. There's no in-app messaging. Unmatch, block, and report are in a menu. |
 | Me | Edit your profile and preferences, see who you've blocked, ask to see your best match, opt out of the experiment, pause, download your data, or delete your account |
@@ -363,7 +363,7 @@ Open http://localhost:8000 in a browser. Sign in as a seeded user (`dev.user01@b
 
 **When rating opens (optional, on top of the button):** admins set a date and time on the controls page, in `STUDY_TIMEZONE`. Before it, people can sign up and be approved, but Discover shows when rating opens, and ratings are refused. Leave it empty to open rating now.
 
-**Best matches (optional, consent v3).** People can ask, on the consent form or on Me, to see their best match after the study. Someone sees their best match's real name, study name, and profile only when **both** of them asked, results are out, both are still approved, and neither has blocked the other. All of this is checked each time the page loads, so unticking the box, deleting an account, or a block hides the pair straight away. Admins don't take part, so they can't opt in. To run it:
+**Best matches (optional, consent v3).** Once someone is approved, and before they see their first profile, they're asked yes or no, with nothing preselected, whether they want to see their best match after the study. This includes people approved before the question existed. They can change it later on Me. Someone sees their best match's real name, study name, and profile only when **both** of them asked, results are out, both are still approved, and neither has blocked the other. All of this is checked each time the page loads, so changing to no, deleting an account, or a block hides the pair straight away. Admins don't take part, so they can't opt in. To run it:
 
 1. Download the ground truth. `participants.csv` has `wants_best_match`, 1 for people who asked.
 2. Run the algorithm on those people only, and save a CSV with the columns `participant_a,participant_b`, one pair per line, nobody in two pairs.

@@ -104,3 +104,34 @@ def test_reciprocal_score_is_an_and_not_an_or(a: float, b: float, expected: floa
     assert insights.reciprocal_score(a, b) == pytest.approx(expected, abs=1e-3)
     assert insights.reciprocal_score(a, b) == insights.reciprocal_score(b, a)
     assert insights.reciprocal_score(a, b) <= min(a, b)
+
+
+def test_overview_counts_genders_buckets_scores_and_tracks_progress() -> None:
+    straight_w = person("W01", "woman", interested_in=frozenset({"man"}))
+    gay_m = person("M01", "man", interested_in=frozenset({"man"}))
+    straight_m = person("M02", "man", interested_in=frozenset({"woman"}))
+    ratings = [
+        Rated(straight_w, gay_m, 0.0),        # 1.0, interested (she likes men)
+        Rated(straight_w, straight_m, 1.0),   # 10.0, interested
+        Rated(gay_m, straight_w, 0.1),        # 1.9, not interested (he likes men)
+        Rated(gay_m, straight_m, 0.5),        # 5.5, interested
+        Rated(straight_m, straight_w, 1 / 9),  # 2.0, interested
+    ]
+    overview = insights.compute([straight_w, gay_m, straight_m], ratings, 0.6).overview
+    assert overview["genders"] == {"labels": ["Women", "Men"], "counts": [1, 2]}
+    scores = overview["scores"]
+    assert scores["labels"][0] == "1.0" and scores["labels"][1] == "1.1" and scores["labels"][-1] == "10.0"
+    assert len(scores["labels"]) == 91
+    counts = dict(zip(scores["labels"], scores["all"]["counts"]))
+    assert {k: v for k, v in counts.items() if v} == {"1.0": 1, "1.9": 1, "2.0": 1, "5.5": 1, "10.0": 1}
+    interested = dict(zip(scores["labels"], scores["interested"]["counts"]))
+    assert interested["1.9"] == 0 and scores["interested"]["n"] == 4 and scores["all"]["n"] == 5
+    assert scores["all"]["mean_10"] == pytest.approx(1 + 9 * (0 + 1 + 0.1 + 0.5 + 1 / 9) / 5, abs=0.01)
+    progress = overview["progress"]
+    assert progress["labels"] == ["W01", "M01", "M02"]
+    assert progress["rated"] == [2, 2, 1] and progress["left"] == [0, 0, 1] and progress["finished"] == 2
+
+
+@pytest.mark.parametrize("score, rating", [(0.0, 1.0), (1.0, 10.0), (0.5, 5.5), (1 / 9, 2.0), (0.1, 1.9), (0.3 / 9, 1.3), ((7.3 - 1) / 9, 7.3)])
+def test_scores_go_back_to_the_rating_people_typed(score: float, rating: float) -> None:
+    assert insights.to_rating(score) == rating

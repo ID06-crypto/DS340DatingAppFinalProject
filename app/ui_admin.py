@@ -164,6 +164,60 @@ def _distribution_chart(data: dict, axis_title: str) -> dict:
     }
 
 
+def _score_caption(view: dict, which: str) -> str:
+    if not view["n"]:
+        return "No ratings here yet."
+    source = f"all {view['n']} ratings" if which == "all" else f"{view['n']} ratings where the rater is interested in the rated person's gender"
+    return f"Mean {view['mean_10']} on the 1 to 10 scale ({view['mean']} stored), from {source}."
+
+
+def _overview_charts(overview: dict) -> dict[str, str]:
+    """The Users page's first charts: people by gender, scores, and rating progress."""
+    genders = overview["genders"]
+    scores = overview["scores"]
+    progress = overview["progress"]
+    no_legend = {"legend": {"display": False}}
+    views = {
+        which: {"data": scores[which]["counts"], "caption": _score_caption(scores[which], which)}
+        for which in ("all", "interested")
+    }
+    return {
+        "gender_chart": json.dumps({
+            "type": "bar",
+            "data": {"labels": genders["labels"], "datasets": [{"label": "People", "data": genders["counts"]}]},
+            "options": {"plugins": no_legend, "scales": {"y": {"beginAtZero": True, "ticks": {"precision": 0}, "title": {"display": True, "text": "People"}}}},
+        }),
+        "score_chart": json.dumps({
+            "type": "bar",
+            "data": {"labels": scores["labels"], "datasets": [{"label": "Ratings", "data": views["all"]["data"]}]},
+            "options": {
+                "plugins": no_legend,
+                "scales": {
+                    "x": {"title": {"display": True, "text": "Rating, as people gave it (1 to 10, in steps of 0.1)"}},
+                    "y": {"beginAtZero": True, "ticks": {"precision": 0}, "title": {"display": True, "text": "Number of ratings"}},
+                },
+            },
+            "views": views,
+        }),
+        "score_captions": {which: views[which]["caption"] for which in views},
+        "progress_chart": json.dumps({
+            "type": "bar",
+            "data": {"labels": progress["labels"], "datasets": [
+                {"label": "Rated", "data": progress["rated"]},
+                {"label": "Still to rate", "data": progress["left"]},
+            ]},
+            "options": {
+                "indexAxis": "y",
+                "scales": {
+                    "x": {"stacked": True, "beginAtZero": True, "ticks": {"precision": 0}, "title": {"display": True, "text": "People rated"}},
+                    "y": {"stacked": True, "ticks": {"autoSkip": False}},
+                },
+            },
+            "rowHeight": 18,
+        }),
+    }
+
+
 @router.get("/users")
 def users(request: Request, admin: Account = Depends(page_admin), s: Services = Depends(services)) -> Response:
     """Every participant's scores for every other, as heat maps, with descriptive charts.
@@ -185,6 +239,7 @@ def users(request: Request, admin: Account = Depends(page_admin), s: Services = 
         "given_chart": json.dumps(_distribution_chart(data.gender_given, "Share of ratings given")),
         "received_chart": json.dumps(_distribution_chart(data.gender_received, "Share of ratings received")),
         "effects": effects,
+        **_overview_charts(data.overview),
     })
 
 

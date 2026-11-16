@@ -65,17 +65,72 @@ def pair(env: Env):
 # Opting in
 
 
-def test_the_consent_form_offers_it_unticked_and_records_the_choice(env: Env) -> None:
-    for email, ticked in (("yes@bu.edu", True), ("no@bu.edu", False)):
-        api = env.login(email)
-        browser = page(env, api)
-        html = browser.get("/onboarding/consent").text
-        assert 'name="best_match"' in html and 'name="best_match" value="yes" aria-describedby="best-match-help" >' in html
-        form = {"csrf_token": csrf_of(html), "version": "3", "agree": "yes"}
-        if ticked:
-            form["best_match"] = "yes"
-        assert browser.post("/onboarding/consent", data=form).status_code == 303
-        assert api.get("/me").json()["wants_best_match"] is ticked
+def onboarded_but_unanswered(env: Env, email: str, approve: bool = True):
+    """Consented, with a profile and preferences, approved, and not asked about best matches yet."""
+    from test_api import profile_body
+
+    api = env.consented(email)
+    assert api.post("/me/profile", json=profile_body()).status_code == 201
+    assert api.put("/me/preferences", json={"interested_in": ["woman"]}).status_code == 200
+    if approve:
+        account_id = env.s.live.account_for_email(email).account_id
+        assert env.admin().post(f"/admin/accounts/{account_id}/approve").status_code == 200
+    return api
+
+
+def test_the_question_waits_until_someone_is_approved(env: Env) -> None:
+    api = onboarded_but_unanswered(env, "new@bu.edu", approve=False)
+    browser = page(env, api)
+    assert browser.get("/discover").headers["location"] == "/pending"
+    assert browser.get("/onboarding/best-match").headers["location"] == "/pending"
+    html = browser.get("/pending").text
+    refused = browser.post("/onboarding/best-match", data={"csrf_token": csrf_of(html), "best_match": "yes"})
+    assert refused.headers["location"] == "/pending"
+    assert not env.s.live.answered_best_match(env.s.live.account_for_email("new@bu.edu").account_id)
+
+
+def test_once_approved_it_asks_yes_or_no_with_nothing_chosen_before_rating(env: Env) -> None:
+    api = onboarded_but_unanswered(env, "new@bu.edu")
+    browser = page(env, api)
+    assert browser.get("/discover").headers["location"] == "/onboarding/best-match"
+    html = browser.get("/onboarding/best-match").text
+    assert "Do you want to see your best match?" in html and "You're approved" in html
+    assert 'value="yes"' in html and 'value="no"' in html and "checked" not in html
+    csrf = csrf_of(html)
+    refused = browser.post("/onboarding/best-match", data={"csrf_token": csrf})
+    assert refused.status_code == 422 and "Choose yes or no" in refused.text
+    assert env.s.live.answered_best_match(env.s.live.account_for_email("new@bu.edu").account_id) is False
+    done = browser.post("/onboarding/best-match", data={"csrf_token": csrf, "best_match": "yes"})
+    assert done.headers["location"] == "/discover"
+    assert api.get("/me").json()["wants_best_match"] is True
+    assert browser.get("/discover").status_code == 200
+
+
+def test_saying_no_is_recorded_and_is_not_asked_again(env: Env) -> None:
+    api = onboarded_but_unanswered(env, "new@bu.edu")
+    browser = page(env, api)
+    csrf = csrf_of(browser.get("/onboarding/best-match").text)
+    browser.post("/onboarding/best-match", data={"csrf_token": csrf, "best_match": "no"})
+    account_id = env.s.live.account_for_email("new@bu.edu").account_id
+    assert env.s.live.answered_best_match(account_id) and not env.s.live.wants_best_match(account_id)
+    assert browser.get("/discover").status_code == 200
+
+
+def test_the_consent_form_no_longer_has_the_box(env: Env) -> None:
+    html = page(env, env.login("c@bu.edu")).get("/onboarding/consent").text
+    assert 'name="best_match"' not in html
+
+
+def test_people_approved_before_the_question_existed_are_asked_before_rating(env: Env) -> None:
+    api, user_id = env.user("old@bu.edu", "man", ("woman",))
+    account_id = env.s.live.account_for_user(user_id).account_id
+    import sqlite3
+    with sqlite3.connect(env.settings.main_db) as conn:
+        conn.execute("DELETE FROM best_match_choices WHERE account_id = ?", (account_id,))
+    browser = page(env, api)
+    assert browser.get("/discover").headers["location"] == "/onboarding/best-match"
+    csrf = csrf_of(browser.get("/onboarding/best-match").text)
+    assert browser.post("/onboarding/best-match", data={"csrf_token": csrf, "best_match": "no"}).headers["location"] == "/discover"
 
 
 def test_it_can_be_changed_on_the_me_page_and_is_audited(env: Env) -> None:
@@ -86,8 +141,8 @@ def test_it_can_be_changed_on_the_me_page_and_is_audited(env: Env) -> None:
     assert api.get("/me").json()["wants_best_match"] is True
     browser.post("/me/settings", data={"csrf_token": csrf_of(html)})
     assert api.get("/me").json()["wants_best_match"] is False
-    actions_logged = [e["action"] for e in env.s.live.audit_entries("best_match_choice", None, limit=10)]
-    assert len(actions_logged) == 2
+    choices = [e for e in env.s.live.audit_entries("best_match_choice", None, limit=10)]
+    assert len(choices) == 3  # No at sign-up, then yes, then no.
 
 
 def test_the_ground_truth_says_who_asked(env: Env) -> None:

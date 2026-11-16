@@ -221,7 +221,7 @@ def transparency(request: Request, s: Services = Depends(services)) -> Response:
 def consent_page(request: Request, account: Account = Depends(page_account), s: Services = Depends(services)) -> Response:
     if is_study_admin(account):
         return redirect(request, "/admin")  # Admins don't take part, so don't consent.
-    return _consent(request, s, wants_best_match=s.live.wants_best_match(account.account_id))
+    return _consent(request, s)
 
 
 def consent_blocks(text: str) -> list[tuple[str, Any]]:
@@ -249,22 +249,20 @@ def consent_blocks(text: str) -> list[tuple[str, Any]]:
     return blocks
 
 
-def _consent(request: Request, s: Services, error: str | None = None, wants_best_match: bool = False) -> Response:
+def _consent(request: Request, s: Services, error: str | None = None) -> Response:
     return render(request, "onboarding_consent.html", {
         "version": s.settings.consent_version,
         "consent_blocks": consent_blocks(s.consent_text()),
         "error": error,
-        "wants_best_match": wants_best_match,
     }, 422 if error else 200)
 
 
 @router.post("/onboarding/consent", dependencies=[csrf])
 async def consent_submit(request: Request, account: Account = Depends(page_account), s: Services = Depends(services)) -> Response:
     form = await request.form()
-    wants_best_match = form.get("best_match") == "yes"
     if form.get("agree") != "yes":
-        return _consent(request, s, "Tick the box to agree before continuing.", wants_best_match)
-    actions.give_consent(s, account, str(form.get("version", "")), wants_best_match)
+        return _consent(request, s, "Tick the box to agree before continuing.")
+    actions.give_consent(s, account, str(form.get("version", "")))
     return redirect(request, after_sign_in(s, s.live.get_account(account.account_id)))
 
 
@@ -347,12 +345,30 @@ async def _save_preferences(request: Request, account: Account, s: Services, edi
     if not chosen:
         return _preferences(request, s, account, action, editing, "Choose at least one.")
     actions.set_preferences(s, account, "everyone" if "everyone" in chosen else chosen)
-    return redirect(request, "/me" if editing else "/pending")
+    return redirect(request, "/me" if editing else next_onboarding_step(s, s.live.get_account(account.account_id)) or "/discover")
 
 
 @router.post("/onboarding/preferences", dependencies=[csrf])
 async def preferences_submit(request: Request, account: Account = Depends(page_consented), s: Services = Depends(services)) -> Response:
     return await _save_preferences(request, account, s, editing=False)
+
+
+@router.get("/onboarding/best-match")
+def best_match_question(request: Request, account: Account = Depends(page_consented), s: Services = Depends(services)) -> Response:
+    if next_onboarding_step(s, account) != "/onboarding/best-match" and not s.live.answered_best_match(account.account_id):
+        return redirect(request, next_onboarding_step(s, account) or "/discover")  # Not approved yet.
+    return render(request, "onboarding_best_match.html", {"error": None})
+
+
+@router.post("/onboarding/best-match", dependencies=[csrf])
+async def best_match_answer(request: Request, account: Account = Depends(page_consented), s: Services = Depends(services)) -> Response:
+    answer = (await request.form()).get("best_match")
+    if account.status != "approved":
+        return redirect(request, next_onboarding_step(s, account) or "/pending")
+    if answer not in ("yes", "no"):
+        return render(request, "onboarding_best_match.html", {"error": "Choose yes or no to continue."}, 422)
+    actions.set_best_match_choice(s, account, answer == "yes")
+    return redirect(request, next_onboarding_step(s, s.live.get_account(account.account_id)) or "/discover")
 
 
 @router.get("/pending")

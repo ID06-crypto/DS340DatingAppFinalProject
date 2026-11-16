@@ -165,7 +165,7 @@ BEST_MATCH_COLUMNS = ("participant_a", "participant_b")
 def set_best_match_choice(s: Services, account: Account, opted_in: bool) -> None:
     if account.role == "admin":
         return  # Admins don't take part.
-    if s.live.wants_best_match(account.account_id) == opted_in:
+    if s.live.answered_best_match(account.account_id) and s.live.wants_best_match(account.account_id) == opted_in:
         return
     s.live.set_wants_best_match(account.account_id, opted_in)
     s.live.audit(account.account_id, "best_match_choice", account.account_id, {"opted_in": opted_in})
