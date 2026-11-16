@@ -362,7 +362,13 @@ def choose_matcher(s: Services, account: Account) -> str:
     return s.rng.choices(names, weights=[weights[n] for n in names])[0]
 
 
+MATCHING_NOT_STARTED_MESSAGE = "Waiting for the site administrators to start matching."
+
+
 def rating_not_open_message(s: Services) -> str | None:
+    """Why nobody can see profiles or rate yet, or None once they can."""
+    if not s.controls().matching_started:
+        return MATCHING_NOT_STARTED_MESSAGE
     opens = s.controls().rating_opens_at
     if opens is not None and utc_now() < opens:
         return f"Rating opens on {s.describe_time(opens)}. Please come back then."
@@ -645,6 +651,12 @@ def resolve_report(s: Services, admin: Account, report_id: str, note: str = "") 
         raise ActionError(404, "Report not found")
     s.live.resolve_report(report_id, admin.account_id)
     s.live.audit(admin.account_id, "resolve_report", report_id, {"note": note})
+
+
+def set_matching_started(s: Services, admin: Account, started: bool) -> None:
+    """The start button: until it's pressed, approved people wait on Discover."""
+    s.live.set_setting("matching_started", started)
+    s.live.audit(admin.account_id, "start_matching" if started else "stop_matching", None, {})
 
 
 def set_controls(

@@ -4,6 +4,24 @@
 {% block content %}
 {% include "admin/_nav.html" %}
 <h1>Controls</h1>
+<section class="start-matching" aria-labelledby="start-heading">
+  <h2 id="start-heading">Matching</h2>
+  {% if controls.matching_started %}
+  <p class="lede">Matching has started. {{ ready }} approved participants can see profiles and rate.</p>
+  <form method="post" action="/admin/controls/stop">
+    {% include "partials/csrf.html" %}
+    <button type="submit" class="quiet">Stop matching</button>
+    <small>Everyone goes back to the waiting screen. Ratings so far are kept.</small>
+  </form>
+  {% else %}
+  <p class="lede">Not started. {{ ready }} approved participants are waiting.</p>
+  <p>Until you start, approved people see "Waiting for the site administrators to start matching" on Discover, and nobody can rate. You can keep approving people. Their page updates by itself within 30 seconds of starting.</p>
+  <form method="post" action="/admin/controls/start">
+    {% include "partials/csrf.html" %}
+    <button type="submit">Start matching</button>
+  </form>
+  {% endif %}
+</section>
 <form method="post" action="/admin/controls">
   {% include "partials/csrf.html" %}
   <fieldset>
@@ -20,7 +38,7 @@
   </fieldset>
   <fieldset>
     <legend>When rating opens</legend>
-    <p>{% if opens_text %}Rating {{ "opened" if rating_open else "opens" }} on {{ opens_text }}.{% else %}Rating is open now.{% endif %} People can sign up and be approved before then, but nobody sees profiles or rates until this time. Leave it empty to open rating now.</p>
+    <p>Optional, on top of the start button: {% if opens_text %}rating {{ "opened" if rating_open else "opens" }} on {{ opens_text }}.{% else %}no date set.{% endif %} People can sign up and be approved before then, but nobody sees profiles or rates until this time. Leave it empty to open rating now.</p>
     <label for="rating_opens_at">Opens at ({{ timezone }} time)</label>
     <input id="rating_opens_at" name="rating_opens_at" type="datetime-local" value="{{ opens_value }}">
   </fieldset>

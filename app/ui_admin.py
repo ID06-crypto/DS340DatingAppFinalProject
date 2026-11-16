@@ -197,11 +197,24 @@ def controls(request: Request, admin: Account = Depends(page_admin), s: Services
         "opens_value": f"{s.local_time(current.rating_opens_at):%Y-%m-%dT%H:%M}" if current.rating_opens_at else "",
         "opens_text": s.describe_time(current.rating_opens_at) if current.rating_opens_at else None,
         "rating_open": actions.rating_not_open_message(s) is None,
+        "ready": sum(1 for a in s.live.list_accounts("approved") if a.role == "user" and a.user_id),
         "timezone": s.settings.study_timezone,
         "threshold": s.settings.match_threshold,
         "threshold_locked": s.live.count_live_ratings() > 0,
         "default_matcher": s.settings.default_matcher,
     })
+
+
+@router.post("/controls/start", dependencies=[csrf])
+def controls_start(request: Request, admin: Account = Depends(page_admin), s: Services = Depends(services)) -> Response:
+    actions.set_matching_started(s, admin, True)
+    return redirect(request, "/admin/controls")
+
+
+@router.post("/controls/stop", dependencies=[csrf])
+def controls_stop(request: Request, admin: Account = Depends(page_admin), s: Services = Depends(services)) -> Response:
+    actions.set_matching_started(s, admin, False)
+    return redirect(request, "/admin/controls")
 
 
 @router.post("/controls", dependencies=[csrf])

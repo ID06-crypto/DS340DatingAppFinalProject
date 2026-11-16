@@ -376,12 +376,19 @@ def _discover_context(s: Services, account: Account, notice: str | None = None, 
     if actions.session_survey_due(s, account, pool_empty):
         actions.mark_survey_shown(s, account, "session")
         survey = {"kind": "session", "question": "Was this worth your time?", "match_id": None, "back": "/discover"}
-    return {"card": card, "person": person, "survey": survey, "notice": notice, "error": error, "nav": "discover", "pool_empty": pool_empty}
+    waiting = card.impression is None and card.message == actions.MATCHING_NOT_STARTED_MESSAGE
+    return {"card": card, "person": person, "survey": survey, "notice": notice, "error": error, "nav": "discover", "pool_empty": pool_empty, "waiting_to_start": waiting}
 
 
 @router.get("/discover")
 def discover(request: Request, account: Account = Depends(page_member), s: Services = Depends(services)) -> Response:
     return render(request, "discover.html", _discover_context(s, account))
+
+
+@router.get("/discover/region")
+def discover_region(request: Request, account: Account = Depends(page_member), s: Services = Depends(services)) -> Response:
+    """Just the card area. The waiting screen asks for it every 30 seconds until matching starts."""
+    return render(request, "partials/discover_region.html", _discover_context(s, account))
 
 
 @router.post("/discover/rate", dependencies=[csrf])

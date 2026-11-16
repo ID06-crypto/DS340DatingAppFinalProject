@@ -4,8 +4,9 @@
 {% if card.impression %}
   {% include "partials/card.html" %}
 {% else %}
-  <section class="still" aria-labelledby="end-heading">
+  <section class="still" aria-labelledby="end-heading" {% if waiting_to_start %}hx-get="/discover/region" hx-trigger="every 30s" hx-target="#card-region" hx-swap="innerHTML"{% endif %}>
     {% if pool_empty %}{{ pile() }}{% else %}{{ hourglass() }}{% endif %}
-    <h2 id="end-heading" tabindex="-1" data-focus>{{ card.message }}</h2>
+    <h2 id="end-heading" tabindex="-1" {% if not waiting_to_start %}data-focus{% endif %}>{{ card.message }}</h2>
+    {% if waiting_to_start %}<p>You're all set. This page will show your first profile as soon as matching starts, so you can leave it open.</p>{% endif %}
   </section>
 {% endif %}

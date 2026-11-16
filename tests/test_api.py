@@ -46,6 +46,10 @@ class Env:
     settings: Settings
     _admin: TestClient | None = None
 
+    def __post_init__(self) -> None:
+        # A new site waits for an admin to start matching. Most tests need it started.
+        self.s.live.set_setting("matching_started", True)
+
     @property
     def s(self) -> Any:
         return self.app.state.services

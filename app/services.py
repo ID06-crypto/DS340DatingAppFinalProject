@@ -27,6 +27,7 @@ class Controls:
     signups_paused: bool
     feed_paused: bool
     rating_opens_at: datetime | None = None  # In UTC. Nobody can rate before it.
+    matching_started: bool = False  # Nobody sees profiles or rates until an admin starts matching.
     results_open_at: datetime | None = None  # In UTC. Nobody sees a best match before it, or without it.
 
 
@@ -88,6 +89,7 @@ class Services:
             signups_paused=bool(self.live.get_setting("signups_paused", False)),
             feed_paused=bool(self.live.get_setting("feed_paused", False)),
             rating_opens_at=datetime.fromisoformat(opens) if (opens := self.live.get_setting("rating_opens_at")) else None,
+            matching_started=bool(self.live.get_setting("matching_started", False)),
             results_open_at=datetime.fromisoformat(shown) if (shown := self.live.get_setting("results_open_at")) else None,
         )
 

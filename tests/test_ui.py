@@ -829,3 +829,42 @@ def test_an_admin_whose_account_isnt_approved_still_goes_straight_to_admin(env: 
         assert browser.get(path).headers["location"] == "/admin", path
     assert browser.get("/admin").status_code == 200
     assert browser.get("/admin/users").status_code == 200
+
+
+
+# Starting matching
+
+
+def test_approved_people_wait_until_an_admin_starts_matching(env: Env) -> None:
+    env.s.live.set_setting("matching_started", False)
+    browser, _ = member(env, "a@bu.edu", "man", ("woman",))
+    api, _ = env.user("b@bu.edu", "woman", ("man",))
+    html = browser.get("/discover").text
+    assert "Waiting for the site administrators to start matching." in html
+    assert 'hx-get="/discover/region"' in html and 'hx-trigger="every 30s"' in html
+    assert api.get("/feed/next").json()["profile"] is None
+    admin = admin_page(env)
+    controls = admin.get("/admin/controls").text
+    assert "Not started. 2 approved participants are waiting." in controls
+    assert admin.post("/admin/controls/start", data={"csrf_token": csrf_of(controls)}).status_code == 303
+    region = browser.get("/discover/region").text
+    assert "Waiting for the site administrators" not in region and "hx-trigger" not in region
+    assert 'name="impression_id"' in region
+    assert "Matching has started." in admin.get("/admin/controls").text
+    assert [e["action"] for e in env.s.live.audit_entries("start_matching", None, limit=5)] == ["start_matching"]
+
+
+def test_ratings_are_refused_before_matching_starts_and_after_it_stops(env: Env) -> None:
+    api, _ = env.user("a@bu.edu", "man", ("woman",))
+    env.user("b@bu.edu", "woman", ("man",))
+    card = api.get("/feed/next").json()
+    admin = admin_page(env)
+    admin.post("/admin/controls/stop", data={"csrf_token": csrf_of(admin.get("/admin/controls").text)})
+    response = api.post("/ratings", json={"impression_id": card["impression_id"], "score": 5})
+    assert response.status_code == 403 and "start matching" in response.text
+
+
+def test_a_new_site_starts_out_waiting(tmp_path: Path) -> None:
+    settings = Settings(site_url=SITE, admin_emails=(ADMIN_EMAIL,), main_db=tmp_path / "m.db", persona_db=tmp_path / "p.db", cookie_secure=False)
+    app = create_app(settings)
+    assert app.state.services.controls().matching_started is False

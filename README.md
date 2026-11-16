@@ -359,7 +359,9 @@ Open http://localhost:8000 in a browser. Sign in as a seeded user (`dev.user01@b
 
 **Surveys:** "Was this worth your time?" from 1 to 5 appears on Discover when nobody's left, and otherwise after every 25th rating, at most once a day. "Was your match with (name) worth your time?" appears on Matches, once per match, once the match is 3 days old. Both can be dismissed.
 
-**When rating opens:** admins set a date and time on the controls page, in `STUDY_TIMEZONE`. Before it, people can sign up and be approved, but Discover shows when rating opens, and ratings are refused. Leave it empty to open rating now.
+**Starting matching:** a new site starts out waiting. Admins approve people as they join, and approved people see "Waiting for the site administrators to start matching" on Discover, which checks again every 30 seconds. Nobody can see profiles or rate until an admin presses **Start matching** on Admin → Controls. **Stop matching** sends everyone back to waiting and keeps every rating. Both are audited.
+
+**When rating opens (optional, on top of the button):** admins set a date and time on the controls page, in `STUDY_TIMEZONE`. Before it, people can sign up and be approved, but Discover shows when rating opens, and ratings are refused. Leave it empty to open rating now.
 
 **Best matches (optional, consent v3).** People can ask, on the consent form or on Me, to see their best match after the study. Someone sees their best match's real name, study name, and profile only when **both** of them asked, results are out, both are still approved, and neither has blocked the other. All of this is checked each time the page loads, so unticking the box, deleting an account, or a block hides the pair straight away. Admins don't take part, so they can't opt in. To run it:
 
